@@ -1,0 +1,39 @@
+# Local Netlify folder
+.netlify
+
+# Python virtual environment
+venv/
+.venv/
+env/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Pipeline-generated data files (regenerated at runtime)
+global_universe.csv
+data_loaded.csv
+fundamentals.csv
+deep_valuation.csv
+technicals.csv
+quant_risk.csv
+quant_risk_analyzed.csv
+sentiment.csv
+finbert_sentiment.csv
+ai_narrative.csv
+narrative_analyzed.csv
+advanced_fundamentals.csv
+advanced_technicals.csv
+healthy_stocks_universe.csv
+technically_primed_stocks.csv
+
+# Excel outputs
+*.xlsx
+
+# OS artifacts
+.DS_Store
+
+# Local environment variables (never commit)
+.env
+.env.*
