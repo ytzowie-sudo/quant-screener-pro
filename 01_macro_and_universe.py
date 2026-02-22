@@ -141,6 +141,71 @@ def get_global_universe() -> pd.DataFrame:
     return df
 
 
+def benner_cycle_phase(year: int = None) -> dict:
+    """
+    Computes the current Benner Cycle phase.
+
+    Samuel Benner (1875) identified a repeating ~27-year cycle in commodity
+    prices with three phases:
+        - PANIC / BUY  : years of lowest prices — best time to buy
+        - GOOD TIMES   : rising prices — hold / accumulate
+        - BOOM / SELL  : years of highest prices — best time to sell
+
+    The pattern repeats in a 16-18-20 year sequence for highs and
+    8-9-10 year sequence for lows, anchored to known historical turning points.
+
+    Known panic lows (buy years):  1902, 1911, 1920, 1929, 1949, 1965, 1982, 1999, 2018
+    Known boom highs (sell years): 1906, 1916, 1929, 1937, 1955, 1973, 1987, 2010, 2026
+    """
+    import datetime
+    if year is None:
+        year = datetime.datetime.now().year
+
+    panic_lows  = [1902, 1911, 1920, 1929, 1949, 1965, 1982, 1999, 2018, 2036]
+    boom_highs  = [1906, 1916, 1929, 1937, 1955, 1973, 1987, 2010, 2026, 2044]
+
+    dist_panic = min(panic_lows, key=lambda y: abs(y - year))
+    dist_boom  = min(boom_highs, key=lambda y: abs(y - year))
+
+    years_to_panic = dist_panic - year
+    years_to_boom  = dist_boom  - year
+
+    if abs(years_to_panic) <= 1:
+        phase  = "PANIC — ZONE D'ACHAT MAXIMALE"
+        signal = "BUY"
+        color  = "green"
+    elif abs(years_to_boom) <= 1:
+        phase  = "BOOM — ZONE DE VENTE MAXIMALE"
+        signal = "SELL"
+        color  = "red"
+    elif years_to_panic > 0 and (years_to_boom < 0 or years_to_panic < years_to_boom):
+        phase  = "GOOD TIMES — Phase de montée"
+        signal = "HOLD/ACCUMULATE"
+        color  = "blue"
+    elif years_to_boom > 0:
+        phase  = "GOOD TIMES — Approche du sommet"
+        signal = "REDUCE/CAUTION"
+        color  = "orange"
+    else:
+        phase  = "TRANSITION"
+        signal = "NEUTRAL"
+        color  = "grey"
+
+    next_panic = next((y for y in sorted(panic_lows) if y >= year), None)
+    next_boom  = next((y for y in sorted(boom_highs)  if y >= year), None)
+
+    return {
+        "Benner_Year":        year,
+        "Benner_Phase":       phase,
+        "Benner_Signal":      signal,
+        "Benner_Color":       color,
+        "Benner_Next_Panic":  next_panic,
+        "Benner_Next_Boom":   next_boom,
+        "Benner_Yrs_To_Panic": years_to_panic if next_panic else None,
+        "Benner_Yrs_To_Boom":  years_to_boom  if next_boom  else None,
+    }
+
+
 def _fetch_fear_greed() -> dict:
     """
     Fetches the CNN Fear & Greed Index (current score + rating).
@@ -184,6 +249,7 @@ def analyze_macro_environment() -> dict:
         except Exception:
             macro[name] = None
     macro.update(_fetch_fear_greed())
+    macro.update(benner_cycle_phase())
     return macro
 
 
@@ -206,6 +272,13 @@ def _macro_dashboard(macro: dict) -> None:
     fg_rating = macro.get("Fear_Greed_Rating") or "N/A"
     fg_display = f"{fg_score:.0f}/100  ({fg_rating})" if fg_score is not None else "N/A"
     print(f"  {'Fear & Greed Index':<26} {fg_display}")
+    benner = macro.get("Benner_Phase", "N/A")
+    benner_signal = macro.get("Benner_Signal", "")
+    next_boom  = macro.get("Benner_Next_Boom")
+    next_panic = macro.get("Benner_Next_Panic")
+    print(f"  {'Benner Cycle Phase':<26} {benner}  [{benner_signal}]")
+    if next_boom:  print(f"  {'  → Next Boom (SELL)':<26} {next_boom}")
+    if next_panic: print(f"  {'  → Next Panic (BUY)':<26} {next_panic}")
     print("=" * 45 + "\n")
 
 

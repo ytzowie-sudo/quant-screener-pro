@@ -22,34 +22,44 @@ def _technical_score(
     bb_lower: float,
     bb_upper: float,
     rel_vol: float,
+    stoch_k: float,
+    stoch_d: float,
 ) -> float:
     """
     Scores a stock's technical setup out of 100 based on the latest day's data.
 
     Points breakdown:
-        Price > SMA_50                              : 25 pts
-        Price > SMA_200 (long-term uptrend)         : 25 pts
-        Price near Lower BB (dip buy)               : 20 pts
-          OR Price > Upper BB with RelVol > 1.2     : 20 pts  (breakout)
-        Relative Volume > 1.2                       : 30 pts
+        Price > SMA_50                              : 20 pts
+        Price > SMA_200 (long-term uptrend)         : 20 pts
+        Price near Lower BB (dip buy)               : 15 pts
+          OR Price > Upper BB with RelVol > 1.2     : 15 pts  (breakout)
+        Relative Volume > 1.2                       : 25 pts
+        Stochastic oversold bounce (%K < 20 → 20)  : 10 pts
+          OR Stochastic bullish cross (%K > %D)     : 10 pts
                                               Total : 100 pts
     """
     score = 0.0
 
     if not np.isnan(sma50) and close > sma50:
-        score += 25
+        score += 20
 
     if not np.isnan(sma200) and close > sma200:
-        score += 25
+        score += 20
 
     if not any(np.isnan(v) for v in [bb_lower, bb_upper]):
         near_lower = close <= bb_lower * 1.02
         breakout   = close >= bb_upper and not np.isnan(rel_vol) and rel_vol > 1.2
         if near_lower or breakout:
-            score += 20
+            score += 15
 
     if not np.isnan(rel_vol) and rel_vol > 1.2:
-        score += 30
+        score += 25
+
+    if not any(np.isnan(v) for v in [stoch_k, stoch_d]):
+        oversold_bounce = stoch_k < 20 and stoch_k > stoch_d
+        bullish_cross   = stoch_k > stoch_d and stoch_k < 80
+        if oversold_bounce or bullish_cross:
+            score += 10
 
     return round(score, 2)
 
@@ -104,9 +114,19 @@ def evaluate_advanced_technicals() -> pd.DataFrame:
             last_volume  = float(volume.iloc[-1]) if not volume.empty else np.nan
             rel_vol = (last_volume / last_vol_sma) if (not np.isnan(last_vol_sma) and last_vol_sma != 0) else np.nan
 
+            stoch_df = ta.stoch(high, low, close, k=14, d=3, smooth_k=3)
+            last_stoch_k = np.nan
+            last_stoch_d = np.nan
+            if stoch_df is not None and not stoch_df.empty:
+                k_cols = [c for c in stoch_df.columns if c.startswith("STOCHk")]
+                d_cols = [c for c in stoch_df.columns if c.startswith("STOCHd")]
+                last_stoch_k = _last(stoch_df[k_cols[0]]) if k_cols else np.nan
+                last_stoch_d = _last(stoch_df[d_cols[0]]) if d_cols else np.nan
+
             tech_score = _technical_score(
                 last_close, last_sma50, last_sma200,
                 last_bb_lower, last_bb_upper, rel_vol,
+                last_stoch_k, last_stoch_d,
             )
 
             records.append({
@@ -118,6 +138,8 @@ def evaluate_advanced_technicals() -> pd.DataFrame:
                 "BB_Upper":        round(last_bb_upper, 2) if not np.isnan(last_bb_upper) else np.nan,
                 "ATR_14":          round(last_atr, 2)      if not np.isnan(last_atr)      else np.nan,
                 "Relative_Volume": round(rel_vol, 2)       if not np.isnan(rel_vol)       else np.nan,
+                "Stoch_K":         round(last_stoch_k, 2)  if not np.isnan(last_stoch_k)  else np.nan,
+                "Stoch_D":         round(last_stoch_d, 2)  if not np.isnan(last_stoch_d)  else np.nan,
                 "Technical_Score": tech_score,
             })
 

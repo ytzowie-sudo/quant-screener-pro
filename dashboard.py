@@ -409,32 +409,66 @@ def _mv(key, unit=""):
     v = _macro.get(key)
     return f"{v:,.2f}{' ' + unit if unit else ''}" if v is not None else "N/A"
 
+import datetime as _dt
+_benner = {
+    "Benner_Year":        _dt.datetime.now().year,
+    "Benner_Phase":       "GOOD TIMES — Approche du sommet",
+    "Benner_Signal":      "REDUCE/CAUTION",
+    "Benner_Color":       "orange",
+    "Benner_Next_Panic":  2036,
+    "Benner_Next_Boom":   2026,
+    "Benner_Yrs_To_Panic": 10,
+    "Benner_Yrs_To_Boom":  0,
+}
+try:
+    import sys as _sys, importlib.util as _ilu
+    _spec = _ilu.spec_from_file_location("macro_mod", os.path.join(_SCRIPT_DIR, "01_macro_and_universe.py"))
+    _macro_mod = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_macro_mod)
+    _benner = _macro_mod.benner_cycle_phase()
+except Exception:
+    pass
+
+_bn_phase  = _benner.get("Benner_Phase", "N/A")
+_bn_signal = _benner.get("Benner_Signal", "")
+_bn_boom   = _benner.get("Benner_Next_Boom")
+_bn_panic  = _benner.get("Benner_Next_Panic")
+_bn_color_map = {"green": "#4CAF50", "red": "#F44336", "orange": "#FF9800", "blue": "#1E88E5", "grey": "#90A4AE"}
+_bn_color  = _bn_color_map.get(_benner.get("Benner_Color", "grey"), "#90A4AE")
+_bn_sub    = f"Prochain Boom: {_bn_boom} · Prochain Panic: {_bn_panic}" if _bn_boom and _bn_panic else ""
+
 st.markdown(f"""
 <div style="display:flex; gap:1rem; flex-wrap:wrap; margin-bottom:1.2rem;">
-    <div style="flex:1; min-width:140px; background:#0D1B2A; border:1px solid #1E3A5F;
+    <div style="flex:1; min-width:130px; background:#0D1B2A; border:1px solid #1E3A5F;
                 border-radius:8px; padding:0.7rem 1rem;">
         <div style="font-size:0.65rem; color:#546E7A; letter-spacing:0.1em;">CRUDE OIL (WTI)</div>
         <div style="font-size:1.1rem; font-weight:700; color:#FFF;">{_mv("Crude_Oil")} <span style="font-size:0.7rem;color:#546E7A;">$/bbl</span></div>
     </div>
-    <div style="flex:1; min-width:140px; background:#0D1B2A; border:1px solid #1E3A5F;
+    <div style="flex:1; min-width:130px; background:#0D1B2A; border:1px solid #1E3A5F;
                 border-radius:8px; padding:0.7rem 1rem;">
         <div style="font-size:0.65rem; color:#546E7A; letter-spacing:0.1em;">GOLD</div>
         <div style="font-size:1.1rem; font-weight:700; color:#FFF;">{_mv("Gold")} <span style="font-size:0.7rem;color:#546E7A;">$/oz</span></div>
     </div>
-    <div style="flex:1; min-width:140px; background:#0D1B2A; border:1px solid #1E3A5F;
+    <div style="flex:1; min-width:130px; background:#0D1B2A; border:1px solid #1E3A5F;
                 border-radius:8px; padding:0.7rem 1rem;">
         <div style="font-size:0.65rem; color:#546E7A; letter-spacing:0.1em;">10Y TREASURY</div>
         <div style="font-size:1.1rem; font-weight:700; color:#FFF;">{_mv("10Y_Treasury")} <span style="font-size:0.7rem;color:#546E7A;">%</span></div>
     </div>
-    <div style="flex:1; min-width:140px; background:#0D1B2A; border:1px solid #1E3A5F;
+    <div style="flex:1; min-width:130px; background:#0D1B2A; border:1px solid #1E3A5F;
                 border-radius:8px; padding:0.7rem 1rem;">
         <div style="font-size:0.65rem; color:#546E7A; letter-spacing:0.1em;">VIX</div>
         <div style="font-size:1.1rem; font-weight:700; color:#FFF;">{_mv("VIX")} <span style="font-size:0.7rem;color:#546E7A;">pts</span></div>
     </div>
-    <div style="flex:1; min-width:160px; background:#0D1B2A; border:1px solid {_fg_color_val};
+    <div style="flex:1; min-width:150px; background:#0D1B2A; border:1px solid {_fg_color_val};
                 border-radius:8px; padding:0.7rem 1rem;">
         <div style="font-size:0.65rem; color:#546E7A; letter-spacing:0.1em;">FEAR &amp; GREED INDEX</div>
         <div style="font-size:1.1rem; font-weight:700; color:{_fg_color_val};">{_fg_str}</div>
+    </div>
+    <div style="flex:2; min-width:220px; background:#0D1B2A; border:1px solid {_bn_color};
+                border-radius:8px; padding:0.7rem 1rem;">
+        <div style="font-size:0.65rem; color:#546E7A; letter-spacing:0.1em;">BENNER CYCLE</div>
+        <div style="font-size:0.95rem; font-weight:700; color:{_bn_color};">{_bn_phase}</div>
+        <div style="font-size:0.7rem; color:#546E7A; margin-top:2px;">{_bn_sub}</div>
     </div>
 </div>
 """, unsafe_allow_html=True)
