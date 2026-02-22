@@ -356,6 +356,41 @@ def _render_stock_card(row: pd.Series) -> None:
 # ── Live Macro Banner ─────────────────────────────────────────────────────────
 
 @st.cache_data(show_spinner=False, ttl=1800)
+def _fetch_sector_rotation() -> list:
+    _SECTORS = {
+        "Tech":        "XLK",
+        "Finance":     "XLF",
+        "Health":      "XLV",
+        "Energy":      "XLE",
+        "Consumer":    "XLY",
+        "Industrials": "XLI",
+        "Materials":   "XLB",
+        "Utilities":   "XLU",
+        "Real Estate": "XLRE",
+        "Staples":     "XLP",
+        "Comm Svcs":   "XLC",
+    }
+    results = []
+    for sector, symbol in _SECTORS.items():
+        try:
+            hist = yf.Ticker(symbol).history(period="3mo")
+            if hist.empty or len(hist) < 5:
+                continue
+            p_now = float(hist["Close"].iloc[-1])
+            p_1m  = float(hist["Close"].iloc[-22]) if len(hist) >= 22 else p_now
+            p_1w  = float(hist["Close"].iloc[-6])  if len(hist) >= 6  else p_now
+            results.append({
+                "sector": sector,
+                "1W": round((p_now - p_1w) / p_1w * 100, 2),
+                "1M": round((p_now - p_1m) / p_1m * 100, 2),
+            })
+        except Exception:
+            continue
+    results.sort(key=lambda x: x["1M"], reverse=True)
+    return results
+
+
+@st.cache_data(show_spinner=False, ttl=1800)
 def _fetch_capital_flows() -> dict:
     _FLOW_ETFS = {
         "🇺🇸 US":       "SPY",
@@ -551,6 +586,45 @@ st.markdown(f"""
 </div>
 <div style="display:flex; gap:0.7rem; flex-wrap:wrap; margin-bottom:1.4rem;">
     {_cf_cards}
+</div>
+""", unsafe_allow_html=True)
+
+
+# ── Sector Rotation ────────────────────────────────────────────────────────────
+
+_sectors = _fetch_sector_rotation()
+if _sectors:
+    _top3    = [s["sector"] for s in _sectors[:3]]
+    _bot3    = [s["sector"] for s in _sectors[-3:]]
+    _sec_cards = ""
+    for s in _sectors:
+        _1m = s["1M"]
+        _1w = s["1W"]
+        _is_top = s["sector"] in _top3
+        _is_bot = s["sector"] in _bot3
+        _border = "#4CAF50" if _is_top else ("#F44336" if _is_bot else "#1E3A5F")
+        _c1m = "#4CAF50" if _1m >= 0 else "#F44336"
+        _c1w = "#4CAF50" if _1w >= 0 else "#F44336"
+        _a1m = "▲" if _1m >= 0 else "▼"
+        _a1w = "▲" if _1w >= 0 else "▼"
+        _sec_cards += f"""
+        <div style="flex:1; min-width:100px; background:#0D1B2A; border:1px solid {_border};
+                    border-radius:8px; padding:0.5rem 0.8rem; text-align:center;">
+            <div style="font-size:0.68rem; font-weight:700; color:#CFD8DC;">{s["sector"]}</div>
+            <div style="font-size:0.65rem; color:{_c1m};">{_a1m} {abs(_1m):.1f}% <span style="color:#546E7A">1M</span></div>
+            <div style="font-size:0.65rem; color:{_c1w};">{_a1w} {abs(_1w):.1f}% <span style="color:#546E7A">1W</span></div>
+        </div>"""
+
+    st.markdown(f"""
+<div style="margin-bottom:0.4rem;">
+    <span style="font-size:0.65rem; color:#546E7A; letter-spacing:0.12em;">
+        ROTATION SECTORIELLE (US) &nbsp;·&nbsp;
+        🏆 <b>{" · ".join(_top3)}</b> &nbsp;|&nbsp;
+        ⚠️ <b>{" · ".join(_bot3)}</b>
+    </span>
+</div>
+<div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:1.6rem;">
+    {_sec_cards}
 </div>
 """, unsafe_allow_html=True)
 

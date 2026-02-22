@@ -45,18 +45,34 @@ def _risk_metrics(hist: pd.DataFrame) -> dict:
 
 
 def _valuation_metrics(info: dict) -> dict:
-    """Extracts deep valuation, growth, and health metrics from yfinance info."""
+    """Extracts deep valuation, growth, health, and catalyst metrics from yfinance info."""
     return {
-        "Forward_PE": info.get("forwardPE", np.nan),
-        "PEG_Ratio": info.get("pegRatio", np.nan),
-        "EV_EBITDA": info.get("enterpriseToEbitda", np.nan),
-        "Revenue_Growth": info.get("revenueGrowth", np.nan),
-        "Earnings_Growth": info.get("earningsGrowth", np.nan),
-        "ROE": info.get("returnOnEquity", np.nan),
-        "ROA": info.get("returnOnAssets", np.nan),
-        "Debt_to_Equity": info.get("debtToEquity", np.nan),
-        "Current_Ratio": info.get("currentRatio", np.nan),
-        "Free_Cashflow": info.get("freeCashflow", np.nan),
+        "Forward_PE":          info.get("forwardPE",              np.nan),
+        "PEG_Ratio":           info.get("pegRatio",               np.nan),
+        "EV_EBITDA":           info.get("enterpriseToEbitda",     np.nan),
+        "Revenue_Growth":      info.get("revenueGrowth",          np.nan),
+        "Earnings_Growth":     info.get("earningsGrowth",         np.nan),
+        "ROE":                 info.get("returnOnEquity",         np.nan),
+        "ROA":                 info.get("returnOnAssets",         np.nan),
+        "Debt_to_Equity":      info.get("debtToEquity",           np.nan),
+        "Current_Ratio":       info.get("currentRatio",           np.nan),
+        "Free_Cashflow":       info.get("freeCashflow",           np.nan),
+        "Short_Interest_Pct":  info.get("shortPercentOfFloat",    np.nan),
+        "Short_Ratio":         info.get("shortRatio",             np.nan),
+        "Insider_Buy_Pct":     info.get("heldPercentInsiders",    np.nan),
+        "Dividend_Yield":      info.get("dividendYield",          np.nan),
+        "Dividend_Rate":       info.get("dividendRate",           np.nan),
+        "Payout_Ratio":        info.get("payoutRatio",            np.nan),
+        "Book_Value":          info.get("bookValue",              np.nan),
+        "Price_to_Book":       info.get("priceToBook",            np.nan),
+        "Earnings_Date":       str(info.get("earningsTimestamp",  "") or ""),
+        "Analyst_Target":      info.get("targetMeanPrice",        np.nan),
+        "Analyst_Rec":         info.get("recommendationMean",     np.nan),
+        "Num_Analyst_Opinions":info.get("numberOfAnalystOpinions",np.nan),
+        "52W_High":            info.get("fiftyTwoWeekHigh",       np.nan),
+        "52W_Low":             info.get("fiftyTwoWeekLow",        np.nan),
+        "Sector":              info.get("sector",                 ""),
+        "Industry":            info.get("industry",               ""),
     }
 
 
@@ -123,12 +139,42 @@ def evaluate_advanced_fundamentals() -> pd.DataFrame:
     for ticker in tqdm(tickers, desc="Building Fundamental Universe"):
         try:
             ticker_obj = yf.Ticker(ticker)
-            info = ticker_obj.info
-            hist = ticker_obj.history(period="3y")
+            info       = ticker_obj.info
+            hist       = ticker_obj.history(period="3y")
 
             row = {"ticker": ticker}
             row.update(_risk_metrics(hist))
             row.update(_valuation_metrics(info))
+
+            if len(hist) >= 252:
+                price_now = float(hist["Close"].iloc[-1])
+                price_1y  = float(hist["Close"].iloc[-252])
+                row["Momentum_1Y"] = round((price_now - price_1y) / price_1y * 100, 2)
+            else:
+                row["Momentum_1Y"] = np.nan
+
+            try:
+                cal = ticker_obj.calendar
+                if cal is not None and not cal.empty:
+                    dates = cal.get("Earnings Date") if "Earnings Date" in cal.index else None
+                    if dates is not None and len(dates) > 0:
+                        row["Next_Earnings_Date"] = str(dates[0])[:10]
+                    else:
+                        row["Next_Earnings_Date"] = ""
+                else:
+                    row["Next_Earnings_Date"] = ""
+            except Exception:
+                row["Next_Earnings_Date"] = ""
+
+            try:
+                inst = ticker_obj.institutional_holders
+                if inst is not None and not inst.empty and "% Out" in inst.columns:
+                    row["Top10_Institutional_Pct"] = round(float(inst["% Out"].head(10).sum()), 4)
+                else:
+                    row["Top10_Institutional_Pct"] = np.nan
+            except Exception:
+                row["Top10_Institutional_Pct"] = np.nan
+
             records.append(row)
         except Exception:
             records.append({"ticker": ticker})

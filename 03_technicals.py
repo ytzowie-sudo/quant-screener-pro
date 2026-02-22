@@ -69,10 +69,9 @@ def evaluate_advanced_technicals() -> pd.DataFrame:
     Technical & momentum scoring engine (V3 pipeline).
 
     Reads the deep-value universe from deep_valuation.csv, computes
-    SMA_50/200, Bollinger Bands(20,2), ATR_14, and Relative Volume for
-    each ticker, then scores each setup 0-100.
-    NaN values are filled with column medians to preserve the full universe.
-    Saves results to filtered_technicals.csv.
+    SMA_50/200, Bollinger Bands(20,2), ATR_14, Relative Volume,
+    Stochastic %K/%D, and Relative Strength vs SPY for each ticker.
+    Saves results to technicals.csv.
     """
     universe = pd.read_csv("deep_valuation.csv")
     if universe.empty:
@@ -80,6 +79,12 @@ def evaluate_advanced_technicals() -> pd.DataFrame:
         return pd.DataFrame()
 
     tickers = universe["ticker"].tolist()
+
+    try:
+        spy_hist = yf.Ticker("SPY").history(period="1y")
+        spy_1y_ret = (float(spy_hist["Close"].iloc[-1]) - float(spy_hist["Close"].iloc[0])) / float(spy_hist["Close"].iloc[0]) if len(spy_hist) >= 50 else np.nan
+    except Exception:
+        spy_1y_ret = np.nan
 
     records = []
 
@@ -141,6 +146,12 @@ def evaluate_advanced_technicals() -> pd.DataFrame:
                 "Stoch_K":         round(last_stoch_k, 2)  if not np.isnan(last_stoch_k)  else np.nan,
                 "Stoch_D":         round(last_stoch_d, 2)  if not np.isnan(last_stoch_d)  else np.nan,
                 "Technical_Score": tech_score,
+                "RS_vs_SPY":       round(
+                    ((last_close - float(close.iloc[0])) / float(close.iloc[0])) - spy_1y_ret, 4
+                ) if not np.isnan(spy_1y_ret) and float(close.iloc[0]) != 0 else np.nan,
+                "Price_vs_52W_High": round(
+                    (last_close - float(close.max())) / float(close.max()) * 100, 2
+                ) if float(close.max()) != 0 else np.nan,
             })
 
         except Exception:
