@@ -554,10 +554,10 @@ _cf_weakest  = _cf.get("weakest")
 
 def _pct_html(val):
     if val is None:
-        return "<span style='color:#546E7A'>N/A</span>"
+        return '<span style="color:#546E7A">N/A</span>'
     color = "#4CAF50" if val >= 0 else "#F44336"
     arrow = "▲" if val >= 0 else "▼"
-    return f"<span style='color:{color}'>{arrow} {abs(val):.1f}%</span>"
+    return f'<span style="color:{color}">{arrow} {abs(val):.1f}%</span>'
 
 _cf_cards = ""
 for region, data in _cf_flows.items():
@@ -565,14 +565,18 @@ for region, data in _cf_flows.items():
     is_weakest  = region == _cf_weakest
     border_color = "#4CAF50" if is_dominant else ("#F44336" if is_weakest else "#1E3A5F")
     badge = " 🏆" if is_dominant else (" ⚠️" if is_weakest else "")
-    _cf_cards += f"""
-    <div style="flex:1; min-width:130px; background:#0D1B2A; border:1px solid {border_color};
-                border-radius:8px; padding:0.6rem 0.9rem;">
-        <div style="font-size:0.7rem; font-weight:700; color:#CFD8DC; margin-bottom:4px;">{region}{badge}</div>
-        <div style="font-size:0.68rem; color:#546E7A;">1W: {_pct_html(data.get('1W'))}</div>
-        <div style="font-size:0.68rem; color:#546E7A;">1M: {_pct_html(data.get('1M'))}</div>
-        <div style="font-size:0.68rem; color:#546E7A;">3M: {_pct_html(data.get('3M'))}</div>
-    </div>"""
+    w1 = _pct_html(data.get("1W"))
+    m1 = _pct_html(data.get("1M"))
+    m3 = _pct_html(data.get("3M"))
+    _cf_cards += (
+        f'<div style="flex:1; min-width:130px; background:#0D1B2A; border:1px solid {border_color};'
+        f'border-radius:8px; padding:0.6rem 0.9rem;">'
+        f'<div style="font-size:0.7rem; font-weight:700; color:#CFD8DC; margin-bottom:4px;">{region}{badge}</div>'
+        f'<div style="font-size:0.68rem; color:#546E7A;">1W: {w1}</div>'
+        f'<div style="font-size:0.68rem; color:#546E7A;">1M: {m1}</div>'
+        f'<div style="font-size:0.68rem; color:#546E7A;">3M: {m3}</div>'
+        f'</div>'
+    )
 
 _cf_signal = ""
 if _cf_dominant and _cf_weakest:
@@ -607,13 +611,15 @@ if _sectors:
         _c1w = "#4CAF50" if _1w >= 0 else "#F44336"
         _a1m = "▲" if _1m >= 0 else "▼"
         _a1w = "▲" if _1w >= 0 else "▼"
-        _sec_cards += f"""
-        <div style="flex:1; min-width:100px; background:#0D1B2A; border:1px solid {_border};
-                    border-radius:8px; padding:0.5rem 0.8rem; text-align:center;">
-            <div style="font-size:0.68rem; font-weight:700; color:#CFD8DC;">{s["sector"]}</div>
-            <div style="font-size:0.65rem; color:{_c1m};">{_a1m} {abs(_1m):.1f}% <span style="color:#546E7A">1M</span></div>
-            <div style="font-size:0.65rem; color:{_c1w};">{_a1w} {abs(_1w):.1f}% <span style="color:#546E7A">1W</span></div>
-        </div>"""
+        _sname = s["sector"]
+        _sec_cards += (
+            f'<div style="flex:1; min-width:100px; background:#0D1B2A; border:1px solid {_border};'
+            f'border-radius:8px; padding:0.5rem 0.8rem; text-align:center;">'
+            f'<div style="font-size:0.68rem; font-weight:700; color:#CFD8DC;">{_sname}</div>'
+            f'<div style="font-size:0.65rem; color:{_c1m};">{_a1m} {abs(_1m):.1f}% <span style="color:#546E7A">1M</span></div>'
+            f'<div style="font-size:0.65rem; color:{_c1w};">{_a1w} {abs(_1w):.1f}% <span style="color:#546E7A">1W</span></div>'
+            f'</div>'
+        )
 
     st.markdown(f"""
 <div style="margin-bottom:0.4rem;">
