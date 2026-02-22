@@ -141,6 +141,67 @@ def get_global_universe() -> pd.DataFrame:
     return df
 
 
+def analyze_capital_flows() -> dict:
+    """
+    Tracks regional capital flows via ETF price performance over 1W, 1M, 3M.
+
+    ETFs used as proxies:
+        SPY  → US equities
+        VGK  → European equities
+        EWJ  → Japan / Asia Developed
+        EEM  → Emerging Markets (Asia, LatAm)
+        FXI  → China specifically
+        DX-Y.NYB → US Dollar Index (DXY) — strong DXY = capital flowing to USD
+
+    Returns a dict with performance % and a dominant_region signal.
+    """
+    _FLOW_ETFS = {
+        "US":      "SPY",
+        "Europe":  "VGK",
+        "Japan":   "EWJ",
+        "Emerging":"EEM",
+        "China":   "FXI",
+        "DXY":     "DX-Y.NYB",
+    }
+    flows = {}
+    perf = {}
+
+    for region, symbol in _FLOW_ETFS.items():
+        try:
+            hist = yf.Ticker(symbol).history(period="3mo")
+            if hist.empty or len(hist) < 5:
+                flows[region] = {"1W": None, "1M": None, "3M": None, "price": None}
+                continue
+            price_now = float(hist["Close"].iloc[-1])
+            price_1w  = float(hist["Close"].iloc[-6])  if len(hist) >= 6  else price_now
+            price_1m  = float(hist["Close"].iloc[-22]) if len(hist) >= 22 else price_now
+            price_3m  = float(hist["Close"].iloc[0])
+
+            perf_1w = (price_now - price_1w) / price_1w * 100
+            perf_1m = (price_now - price_1m) / price_1m * 100
+            perf_3m = (price_now - price_3m) / price_3m * 100
+
+            flows[region] = {
+                "1W":   round(perf_1w, 2),
+                "1M":   round(perf_1m, 2),
+                "3M":   round(perf_3m, 2),
+                "price": round(price_now, 2),
+            }
+            if region != "DXY":
+                perf[region] = perf_1m
+        except Exception:
+            flows[region] = {"1W": None, "1M": None, "3M": None, "price": None}
+
+    dominant = max(perf, key=perf.get) if perf else "N/A"
+    weakest  = min(perf, key=perf.get) if perf else "N/A"
+
+    return {
+        "flows":          flows,
+        "dominant_region": dominant,
+        "weakest_region":  weakest,
+    }
+
+
 def benner_cycle_phase(year: int = None) -> dict:
     """
     Computes the current Benner Cycle phase.

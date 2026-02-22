@@ -356,6 +356,42 @@ def _render_stock_card(row: pd.Series) -> None:
 # ── Live Macro Banner ─────────────────────────────────────────────────────────
 
 @st.cache_data(show_spinner=False, ttl=1800)
+def _fetch_capital_flows() -> dict:
+    _FLOW_ETFS = {
+        "🇺🇸 US":       "SPY",
+        "🇪🇺 Europe":   "VGK",
+        "🇯🇵 Japan":    "EWJ",
+        "🌏 Emerging":  "EEM",
+        "🇨🇳 China":    "FXI",
+        "💵 DXY":       "DX-Y.NYB",
+    }
+    flows = {}
+    perf  = {}
+    for region, symbol in _FLOW_ETFS.items():
+        try:
+            hist = yf.Ticker(symbol).history(period="3mo")
+            if hist.empty or len(hist) < 5:
+                flows[region] = {"1W": None, "1M": None, "3M": None}
+                continue
+            p_now = float(hist["Close"].iloc[-1])
+            p_1w  = float(hist["Close"].iloc[-6])  if len(hist) >= 6  else p_now
+            p_1m  = float(hist["Close"].iloc[-22]) if len(hist) >= 22 else p_now
+            p_3m  = float(hist["Close"].iloc[0])
+            flows[region] = {
+                "1W": round((p_now - p_1w) / p_1w * 100, 2),
+                "1M": round((p_now - p_1m) / p_1m * 100, 2),
+                "3M": round((p_now - p_3m) / p_3m * 100, 2),
+            }
+            if "DXY" not in region:
+                perf[region] = flows[region]["1M"]
+        except Exception:
+            flows[region] = {"1W": None, "1M": None, "3M": None}
+    dominant = max(perf, key=perf.get) if perf else None
+    weakest  = min(perf, key=perf.get) if perf else None
+    return {"flows": flows, "dominant": dominant, "weakest": weakest}
+
+
+@st.cache_data(show_spinner=False, ttl=1800)
 def _fetch_macro() -> dict:
     import yfinance as yf
     _MACRO_TICKERS = {
@@ -470,6 +506,51 @@ st.markdown(f"""
         <div style="font-size:0.95rem; font-weight:700; color:{_bn_color};">{_bn_phase}</div>
         <div style="font-size:0.7rem; color:#546E7A; margin-top:2px;">{_bn_sub}</div>
     </div>
+</div>
+""", unsafe_allow_html=True)
+
+
+# ── Capital Flows Banner ───────────────────────────────────────────────────────
+
+_cf = _fetch_capital_flows()
+_cf_flows    = _cf.get("flows", {})
+_cf_dominant = _cf.get("dominant")
+_cf_weakest  = _cf.get("weakest")
+
+def _pct_html(val):
+    if val is None:
+        return "<span style='color:#546E7A'>N/A</span>"
+    color = "#4CAF50" if val >= 0 else "#F44336"
+    arrow = "▲" if val >= 0 else "▼"
+    return f"<span style='color:{color}'>{arrow} {abs(val):.1f}%</span>"
+
+_cf_cards = ""
+for region, data in _cf_flows.items():
+    is_dominant = region == _cf_dominant
+    is_weakest  = region == _cf_weakest
+    border_color = "#4CAF50" if is_dominant else ("#F44336" if is_weakest else "#1E3A5F")
+    badge = " 🏆" if is_dominant else (" ⚠️" if is_weakest else "")
+    _cf_cards += f"""
+    <div style="flex:1; min-width:130px; background:#0D1B2A; border:1px solid {border_color};
+                border-radius:8px; padding:0.6rem 0.9rem;">
+        <div style="font-size:0.7rem; font-weight:700; color:#CFD8DC; margin-bottom:4px;">{region}{badge}</div>
+        <div style="font-size:0.68rem; color:#546E7A;">1W: {_pct_html(data.get('1W'))}</div>
+        <div style="font-size:0.68rem; color:#546E7A;">1M: {_pct_html(data.get('1M'))}</div>
+        <div style="font-size:0.68rem; color:#546E7A;">3M: {_pct_html(data.get('3M'))}</div>
+    </div>"""
+
+_cf_signal = ""
+if _cf_dominant and _cf_weakest:
+    _cf_signal = f"💰 Capitaux vers <b>{_cf_dominant}</b> · Fuite de <b>{_cf_weakest}</b> (sur 1 mois)"
+
+st.markdown(f"""
+<div style="margin-bottom:0.4rem;">
+    <span style="font-size:0.65rem; color:#546E7A; letter-spacing:0.12em;">
+        FLUX DE CAPITAUX RÉGIONAUX (ETF PROXY) &nbsp;·&nbsp; {_cf_signal}
+    </span>
+</div>
+<div style="display:flex; gap:0.7rem; flex-wrap:wrap; margin-bottom:1.4rem;">
+    {_cf_cards}
 </div>
 """, unsafe_allow_html=True)
 
