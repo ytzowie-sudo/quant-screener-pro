@@ -43,15 +43,15 @@ def _add_kelly(df: pd.DataFrame, portfolio_type: str) -> pd.DataFrame:
     base_kelly = _kelly_criterion(wr, aw, al)
 
     if "Narrative_Score" in df.columns and key == "court":
-        modifier = (df["Narrative_Score"].fillna(50) - 50) / 500
+        modifier = (df["Narrative_Score"].fillna(50) - 50) / 200
     elif "Deep_Value_Score" in df.columns and key == "long":
-        modifier = (df["Deep_Value_Score"].fillna(50) - 50) / 500
+        modifier = (df["Deep_Value_Score"].fillna(50) - 50) / 200
     elif "Quant_Risk_Score" in df.columns:
-        modifier = (df["Quant_Risk_Score"].fillna(50) - 50) / 500
+        modifier = (df["Quant_Risk_Score"].fillna(50) - 50) / 200
     else:
         modifier = pd.Series(0.0, index=df.index)
 
-    df["Kelly_Position_Pct"] = (base_kelly + modifier * 100).clip(1.0, 25.0).round(1)
+    df["Kelly_Position_Pct"] = (base_kelly + modifier * 50).clip(1.0, 25.0).round(1)
     return df
 
 _OUTPUT_COLS = [
@@ -156,18 +156,31 @@ def build_portfolios(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
     )
 
     # ── Short Term: strong narrative + bullish divergence ─────────────────────
+    # Use Narrative_Score filter only if scores are differentiated (std > 2)
     st_mask = pd.Series([True] * len(df), index=df.index)
-    if "Narrative_Score" in df.columns:
+    narr_std = df["Narrative_Score"].std() if "Narrative_Score" in df.columns else 0
+    if "Narrative_Score" in df.columns and narr_std > 2:
         st_mask &= df["Narrative_Score"] > 60
     short_candidates = df[st_mask].copy()
     if short_candidates.empty:
         short_candidates = df.copy()
-    sort_cols = ["Narrative_Score"]
-    sort_asc  = [False]
+
+    # Sort: Bullish Divergence first, then best composite score
+    sort_cols = []
+    sort_asc  = []
     if "Bullish_Divergence" in short_candidates.columns:
         short_candidates["_bd_int"] = short_candidates["Bullish_Divergence"].astype(int)
-        sort_cols = ["_bd_int", "Narrative_Score"]
-        sort_asc  = [False, False]
+        sort_cols.append("_bd_int")
+        sort_asc.append(False)
+    # Primary sort: Narrative if differentiated, else Ultimate_Conviction_Score
+    if narr_std > 2 and "Narrative_Score" in short_candidates.columns:
+        sort_cols.append("Narrative_Score")
+    elif "Ultimate_Conviction_Score" in short_candidates.columns:
+        sort_cols.append("Ultimate_Conviction_Score")
+    elif "Quant_Risk_Score" in short_candidates.columns:
+        sort_cols.append("Quant_Risk_Score")
+    sort_asc.extend([False] * (len(sort_cols) - len(sort_asc)))
+
     short_term = (
         short_candidates
         .sort_values(sort_cols, ascending=sort_asc)

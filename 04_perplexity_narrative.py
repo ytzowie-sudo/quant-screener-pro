@@ -30,6 +30,14 @@ _HEADERS = {
     "Content-Type":  "application/json",
 }
 
+# Score weights for Ultimate_Conviction_Score
+# All inputs normalized to 0-100 before weighting
+_W_QUANT     = 0.35   # Quant Risk (Hurst, VaR, VWAP, divergence)
+_W_NARR      = 0.25   # Perplexity AI narrative
+_W_FUND      = 0.20   # Fundamental (Sharpe, ROE, PEG, FCF...)
+_W_FINBERT   = 0.10   # FinBERT news sentiment
+_W_DEEPVAL   = 0.10   # Deep Value (Graham, MoS, ownership)
+
 
 def _extract_json(text: str) -> dict:
     """
@@ -105,13 +113,15 @@ def get_perplexity_narrative(ticker: str) -> dict:
             {
                 "role": "user",
                 "content": (
-                    f"Search the live web for the stock ticker {ticker}. "
-                    "Give me a JSON response with exactly 4 keys: "
-                    "'Catalysts' (1 short sentence on upcoming positive events/patents/M&A), "
-                    "'Threats' (1 short sentence on AI disruption/laws/macro risks), "
-                    "'AI_Impact' (1 short sentence on how AI affects their moat), and "
-                    "'Narrative_Score' (an integer from 0 to 100 representing the fundamental "
-                    "news and future outlook). Return ONLY valid JSON, nothing else."
+                    f"Analyze stock ticker {ticker} using live web data. "
+                    "You MUST respond with ONLY a raw JSON object — no markdown, no explanation, no code fences. "
+                    "The JSON must have exactly these 4 keys:\n"
+                    '{ "Catalysts": "one sentence on upcoming catalysts (earnings, M&A, product launch)", '
+                    '"Threats": "one sentence on key risks (competition, regulation, macro)", '
+                    '"AI_Impact": "one sentence on how AI affects this company moat", '
+                    '"Narrative_Score": <integer 0-100 where 0=very bearish, 50=neutral, 100=very bullish> }\n'
+                    "Base the score on recent news, earnings trend, and analyst sentiment. "
+                    "Return ONLY the JSON object, nothing else."
                 ),
             },
         ],
@@ -161,10 +171,32 @@ def run_narrative_analysis() -> pd.DataFrame:
         merged["Narrative_Score"], errors="coerce"
     ).fillna(50).clip(0, 100)
 
+    # Normalize Finbert_Score from [-1,+1] to [0,100]
+    if "Finbert_Score" in merged.columns:
+        merged["Finbert_Score_N"] = ((merged["Finbert_Score"].fillna(0) + 1) / 2 * 100).clip(0, 100)
+    else:
+        merged["Finbert_Score_N"] = 50.0
+
+    # Merge Fundamental_Score and Deep_Value_Score if available
+    for extra_csv, score_col in [("fundamentals.csv", "Fundamental_Score"), ("deep_valuation.csv", "Deep_Value_Score")]:
+        if score_col not in merged.columns:
+            try:
+                extra = pd.read_csv(extra_csv)[["ticker", score_col]]
+                merged = merged.merge(extra, on="ticker", how="left")
+            except Exception:
+                merged[score_col] = 50.0
+        merged[score_col] = pd.to_numeric(merged.get(score_col, 50), errors="coerce").fillna(50).clip(0, 100)
+
+    # Ultimate_Conviction_Score: weighted sum of all 5 normalized scores (0-100)
     merged["Ultimate_Conviction_Score"] = (
-        merged["Quant_Risk_Score"] * _QUANT_W
-        + merged["Narrative_Score"] * _NARR_W
+        merged["Quant_Risk_Score"].clip(0, 100)  * _W_QUANT
+        + merged["Narrative_Score"]              * _W_NARR
+        + merged["Fundamental_Score"]            * _W_FUND
+        + merged["Finbert_Score_N"]              * _W_FINBERT
+        + merged["Deep_Value_Score"]             * _W_DEEPVAL
     ).round(2)
+
+    merged.drop(columns=["Finbert_Score_N"], errors="ignore", inplace=True)
 
     merged.sort_values("Ultimate_Conviction_Score", ascending=False, inplace=True)
     merged.reset_index(drop=True, inplace=True)
