@@ -322,50 +322,65 @@ def _render_stock_card(row: pd.Series) -> None:
     dv_score  = _safe(row, "Deep_Value_Score")
     qr_score  = _safe(row, "Quant_Risk_Score")
     narr      = _safe(row, "Narrative_Score")
-    catalysts = _safe(row, "Catalysts", "No data available.")
-    threats   = _safe(row, "Threats",   "No data available.")
-    ai_impact = _safe(row, "AI_Impact", "No data available.")
+    catalysts = str(_safe(row, "Catalysts", "No data available."))
+    threats   = str(_safe(row, "Threats",   "No data available."))
+    ai_impact = str(_safe(row, "AI_Impact", "No data available."))
 
     var_str, var_css   = _var_display(row)
     mos_str, mos_css   = _mos_display(row)
     entry_str          = _entry_zone(row)
     target_str         = _target_price(row)
 
-    dv_str  = f"{dv_score:.1f}"  if dv_score  is not None else "N/A"
-    qr_str  = f"{qr_score:.1f}" if qr_score  is not None else "N/A"
+    dv_str   = f"{dv_score:.1f}"  if dv_score is not None else "N/A"
+    qr_str   = f"{qr_score:.1f}" if qr_score is not None else "N/A"
     narr_str = f"{narr:.0f}/100" if narr      is not None else "N/A"
 
     name = _company_name(ticker) if ticker != "—" else "—"
     name_display = name if name != ticker else ""
 
-    st.markdown(f"""
-    <div class="stock-card">
-        <div style="margin-bottom:0.9rem;">
-            <span class="ticker-name">{ticker}</span>
-            <span class="conviction-badge">CONVICTION {ucs_str}</span>
-            {"<br><span style='font-size:0.8rem; color:#90A4AE; letter-spacing:0.05em;'>" + name_display + "</span>" if name_display else ""}
-        </div>
-        <div style="display:grid; grid-template-columns: repeat(4,1fr); gap:8px; margin-bottom:0.9rem;">
-            {_metric_html("ENTRY ZONE", entry_str, "blue")}
-            {_metric_html("TARGET PRICE", target_str, "positive")}
-            {_metric_html("MARGIN OF SAFETY", mos_str, mos_css)}
-            {_metric_html("95% VaR (RISK)", var_str, var_css)}
-        </div>
-        <div style="display:grid; grid-template-columns: repeat(3,1fr); gap:8px; margin-bottom:0.9rem;">
-            {_metric_html("DEEP VALUE SCORE", dv_str)}
-            {_metric_html("QUANT RISK SCORE", qr_str)}
-            {_metric_html("NARRATIVE SCORE", narr_str)}
-        </div>
-        <div class="narrative-buy">
-            <b>✅ POURQUOI ACHETER (Catalyst):</b><br>{catalysts}
-        </div>
-        <div class="narrative-risk">
-            <b>⚠️ RISQUE &amp; IA:</b><br>
-            <b>Threats:</b> {threats}<br>
-            <b>AI Impact:</b> {ai_impact}
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    # Build name subtitle separately to avoid nested quotes in f-string
+    name_html = (
+        "<br><span style='font-size:0.8rem; color:#90A4AE; letter-spacing:0.05em;'>"
+        + name_display + "</span>"
+    ) if name_display else ""
+
+    # Build metric rows separately
+    row1_html = (
+        '<div style="display:grid; grid-template-columns: repeat(4,1fr); gap:8px; margin-bottom:0.9rem;">'
+        + _metric_html("ENTRY ZONE",        entry_str,  "blue")
+        + _metric_html("TARGET PRICE",      target_str, "positive")
+        + _metric_html("MARGIN OF SAFETY",  mos_str,    mos_css)
+        + _metric_html("95% VaR (RISK)",    var_str,    var_css)
+        + "</div>"
+    )
+    row2_html = (
+        '<div style="display:grid; grid-template-columns: repeat(3,1fr); gap:8px; margin-bottom:0.9rem;">'
+        + _metric_html("DEEP VALUE SCORE",  dv_str)
+        + _metric_html("QUANT RISK SCORE",  qr_str)
+        + _metric_html("NARRATIVE SCORE",   narr_str)
+        + "</div>"
+    )
+
+    html = (
+        '<div class="stock-card">'
+        '<div style="margin-bottom:0.9rem;">'
+        '<span class="ticker-name">' + ticker + "</span>"
+        '<span class="conviction-badge">CONVICTION ' + ucs_str + "</span>"
+        + name_html
+        + "</div>"
+        + row1_html
+        + row2_html
+        + '<div class="narrative-buy">'
+        "<b>✅ POURQUOI ACHETER (Catalyst):</b><br>" + catalysts
+        + "</div>"
+        + '<div class="narrative-risk">'
+        "<b>⚠️ RISQUE &amp; IA:</b><br>"
+        "<b>Threats:</b> " + threats + "<br>"
+        "<b>AI Impact:</b> " + ai_impact
+        + "</div>"
+        + "</div>"
+    )
+    st.markdown(html, unsafe_allow_html=True)
 
 
 # ── Live Macro Banner ─────────────────────────────────────────────────────────
