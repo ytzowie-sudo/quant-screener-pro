@@ -307,7 +307,7 @@ def run_narrative_analysis() -> pd.DataFrame:
             break
     if lt_filtered.empty:
         lt_filtered = lt_df[~lt_df["ticker"].isin(ct_mt_tickers)]
-    lt_sort = "Deep_Value_Score" if "Deep_Value_Score" in lt_filtered.columns else "Margin_of_Safety"
+    lt_sort = "Margin_of_Safety" if "Margin_of_Safety" in lt_filtered.columns else "Deep_Value_Score"
     lt_pool = lt_filtered.nlargest(5, lt_sort).copy()
     lt_pool["_pool"] = "long"
     print(f"  LT pool (top 5): {lt_pool['ticker'].tolist()}")

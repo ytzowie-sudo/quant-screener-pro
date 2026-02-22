@@ -252,104 +252,80 @@ def _clean_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 def run_portfolio_allocator() -> dict[str, pd.DataFrame]:
     """
-    Builds 3 portfolios from distinct data sources:
+    Builds 3 portfolios from distinct data sources, fully enriched:
 
-    COURT TERME  → ai_narrative.csv (top 30 Perplexity stocks, narrative quality)
-    MOYEN TERME  → quant_risk.csv   (top 100 quant stocks, momentum/trend quality)
-    LONG TERME   → deep_valuation.csv (all 590 stocks, value quality)
+    COURT TERME  → ai_narrative.csv + event_driven.csv  (Perplexity + event)
+    MOYEN TERME  → quant_risk.csv   (full universe, momentum/trend)
+    LONG TERME   → deep_valuation.csv (full universe, deep value)
 
-    Each pool is enriched with fundamentals + deep_valuation before selection.
+    Each pool is enriched with ALL available data sources before selection,
+    so every stock has Last_Price, Margin_of_Safety, VaR_95, etc.
     """
-    # ── Load Perplexity track (Court Terme base) ───────────────────────────────
+    # ── Load primary sources ─────────────────────────────────────────────────
     df = pd.read_csv("ai_narrative.csv")
     if df.empty:
         print("Error: ai_narrative.csv is empty — run 04_perplexity_narrative.py first.")
         return {}
 
-    # ── Load wider quant pool for MT (100 stocks) ─────────────────────────────
     try:
         quant_df = pd.read_csv("quant_risk.csv")
     except FileNotFoundError:
         quant_df = df.copy()
         print("  quant_risk.csv not found — using ai_narrative for MT pool")
 
-    # ── Load deep value pool for LT (all 590 stocks) ──────────────────────────
     try:
         dv_full = pd.read_csv("deep_valuation.csv")
     except FileNotFoundError:
         dv_full = df.copy()
         print("  deep_valuation.csv not found — using ai_narrative for LT pool")
 
-    # ── Enrich with fundamentals (Last_Price, Margin_of_Safety, scores, etc.) ─
+    # ── Load enrichment sources once ─────────────────────────────────────────
     try:
-        fund_df = pd.read_csv("fundamentals.csv")
-        fund_cols = [c for c in fund_df.columns if c not in df.columns or c == "ticker"]
-        df = df.merge(fund_df[["ticker"] + [c for c in fund_cols if c != "ticker"]],
-                      on="ticker", how="left")
+        fund_src = pd.read_csv("fundamentals.csv")
     except FileNotFoundError:
+        fund_src = pd.DataFrame()
         print("  fundamentals.csv not found — skipping fundamental enrichment")
 
     try:
-        dv_df = pd.read_csv("deep_valuation.csv")
-        dv_cols = [c for c in dv_df.columns if c not in df.columns or c == "ticker"]
-        df = df.merge(dv_df[["ticker"] + [c for c in dv_cols if c != "ticker"]],
-                      on="ticker", how="left")
+        dv_src = pd.read_csv("deep_valuation.csv")
     except FileNotFoundError:
-        print("  deep_valuation.csv not found — skipping deep valuation enrichment")
+        dv_src = pd.DataFrame()
 
-    df = _clean_columns(df)
-
-    # ── Fill NaN Catalysts/Threats/AI_Impact with placeholder ─────────────────
-    for col in ["Catalysts", "Threats", "AI_Impact"]:
-        if col in df.columns:
-            df[col] = df[col].fillna("Analyse en cours — relancer le pipeline pour les narratives.")
-
-    # ── Tag CT pool on Perplexity df ───────────────────────────────────────────
-    if "_pool" not in df.columns:
-        df["_pool"] = "court"
-
-    # ── Build MT pool from quant_risk.csv (100 stocks) enriched ───────────────
     try:
-        fund_df = pd.read_csv("fundamentals.csv")
-        qf_add = [c for c in fund_df.columns if c not in quant_df.columns and c != "ticker"]
-        quant_df = quant_df.merge(fund_df[["ticker"] + qf_add], on="ticker", how="left")
-    except Exception:
-        pass
-    try:
-        dv_df2 = pd.read_csv("deep_valuation.csv")
-        qd_add = [c for c in dv_df2.columns if c not in quant_df.columns and c != "ticker"]
-        quant_df = quant_df.merge(dv_df2[["ticker"] + qd_add], on="ticker", how="left")
-    except Exception:
-        pass
-    quant_df = _clean_columns(quant_df)
-    quant_df["_pool"] = "moyen"
-    # Carry over Perplexity narrative data for any overlapping tickers
-    narr_cols = [c for c in ["Catalysts", "Threats", "AI_Impact", "Narrative_Score",
-                              "Ultimate_Conviction_Score", "Finbert_Score"] if c in df.columns]
-    if narr_cols:
-        quant_df = quant_df.merge(df[["ticker"] + narr_cols], on="ticker", how="left")
-        quant_df = _clean_columns(quant_df)
-    for col in ["Catalysts", "Threats", "AI_Impact"]:
-        if col in quant_df.columns:
-            quant_df[col] = quant_df[col].fillna("Analyse en cours — relancer le pipeline pour les narratives.")
+        qr_src = pd.read_csv("quant_risk.csv")
+    except FileNotFoundError:
+        qr_src = pd.DataFrame()
 
-    # ── Build LT pool from deep_valuation.csv (590 stocks) enriched ───────────
-    try:
-        fund_df2 = pd.read_csv("fundamentals.csv")
-        lf_add = [c for c in fund_df2.columns if c not in dv_full.columns and c != "ticker"]
-        dv_full_e = dv_full.merge(fund_df2[["ticker"] + lf_add], on="ticker", how="left")
-    except Exception:
-        dv_full_e = dv_full.copy()
-    dv_full_e = _clean_columns(dv_full_e)
-    dv_full_e["_pool"] = "long"
-    if narr_cols:
-        dv_full_e = dv_full_e.merge(df[["ticker"] + narr_cols], on="ticker", how="left")
-        dv_full_e = _clean_columns(dv_full_e)
-    for col in ["Catalysts", "Threats", "AI_Impact"]:
-        if col in dv_full_e.columns:
-            dv_full_e[col] = dv_full_e[col].fillna("Analyse en cours — relancer le pipeline pour les narratives.")
+    def _enrich(pool: pd.DataFrame, *sources: pd.DataFrame) -> pd.DataFrame:
+        """Add missing columns AND fill NaN in existing columns from sources."""
+        for src in sources:
+            if src.empty or "ticker" not in src.columns:
+                continue
+            src_dedup = src.drop_duplicates(subset="ticker", keep="first")
+            # 1) Add brand-new columns via merge
+            new_cols = [c for c in src_dedup.columns if c not in pool.columns and c != "ticker"]
+            if new_cols:
+                pool = pool.merge(src_dedup[["ticker"] + new_cols], on="ticker", how="left")
+            # 2) Fill NaN in existing columns via map lookup
+            fill_cols = [c for c in src_dedup.columns
+                         if c in pool.columns and c != "ticker" and pool[c].isna().any()]
+            if fill_cols:
+                lookup = src_dedup.set_index("ticker")
+                for col in fill_cols:
+                    if col in lookup.columns:
+                        filler = pool["ticker"].map(lookup[col])
+                        pool[col] = pool[col].combine_first(filler)
+        return _clean_columns(pool)
 
-    # ── Merge event-driven track into CT pool ─────────────────────────────────
+    _PLACEHOLDER = "Analyse en cours — relancer le pipeline pour les narratives."
+
+    def _fill_placeholders(pool: pd.DataFrame) -> pd.DataFrame:
+        for col in ["Catalysts", "Threats", "AI_Impact"]:
+            if col in pool.columns:
+                pool[col] = pool[col].fillna(_PLACEHOLDER)
+        return pool
+
+    # ── Merge event-driven into CT pool BEFORE enrichment ────────────────────
     try:
         event_df = pd.read_csv("event_driven.csv")
         if not event_df.empty:
@@ -359,11 +335,36 @@ def run_portfolio_allocator() -> dict[str, pd.DataFrame]:
             df = _clean_columns(df)
             print(f"  Event track merged into CT pool → {len(df)} CT candidates")
     except FileNotFoundError:
-        print("  event_driven.csv not found — CT pool uses quant track only")
+        print("  event_driven.csv not found — CT pool uses Perplexity track only")
 
-    # ── Combine all 3 pools into one df with _pool tags ───────────────────────
+    if "_pool" not in df.columns:
+        df["_pool"] = "court"
+
+    # ── Enrich CT pool with ALL sources (fund + dv + quant_risk) ─────────────
+    df = _enrich(df, fund_src, dv_src, qr_src)
+    df = _fill_placeholders(df)
+
+    # ── Build MT pool from quant_risk.csv enriched ──────────────────────────
+    quant_df["_pool"] = "moyen"
+    quant_df = _enrich(quant_df, fund_src, dv_src)
+    # Carry over Perplexity narrative data for any overlapping tickers
+    narr_cols = [c for c in ["Catalysts", "Threats", "AI_Impact", "Narrative_Score",
+                              "Ultimate_Conviction_Score", "Finbert_Score"] if c in df.columns]
+    if narr_cols:
+        quant_df = quant_df.merge(df[["ticker"] + narr_cols], on="ticker", how="left")
+        quant_df = _clean_columns(quant_df)
+    quant_df = _fill_placeholders(quant_df)
+
+    # ── Build LT pool from deep_valuation.csv enriched with quant_risk ──────
+    dv_full_e = _enrich(dv_full, fund_src, qr_src)
+    dv_full_e["_pool"] = "long"
+    if narr_cols:
+        dv_full_e = dv_full_e.merge(df[["ticker"] + narr_cols], on="ticker", how="left")
+        dv_full_e = _clean_columns(dv_full_e)
+    dv_full_e = _fill_placeholders(dv_full_e)
+
+    # ── Combine all 3 pools into one df with _pool tags ─────────────────────
     combined = pd.concat([df, quant_df, dv_full_e], ignore_index=True, sort=False)
-    # Keep first occurrence per ticker per pool (CT > MT > LT priority for dedup within pool)
     combined.drop_duplicates(subset=["ticker", "_pool"], keep="first", inplace=True)
     combined.reset_index(drop=True, inplace=True)
     combined = _clean_columns(combined)
