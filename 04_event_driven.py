@@ -28,23 +28,53 @@ _HEADERS = {
 
 def _extract_json(text: str) -> dict:
     text = text.strip()
+
+    # 1. Direct JSON parse
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
+
+    # 2. JSON inside markdown fences
     fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
     if fence:
         try:
             return json.loads(fence.group(1))
         except json.JSONDecodeError:
             pass
+
+    # 3. Any JSON object in the text
     bare = re.search(r"\{.*\}", text, re.DOTALL)
     if bare:
         try:
             return json.loads(bare.group(0))
         except json.JSONDecodeError:
             pass
-    return {}
+
+    # 4. Last resort: extract individual fields via regex from free text
+    result = {}
+    for key in ["Catalysts", "Threats", "AI_Impact"]:
+        m = re.search(
+            rf'["\']?{key}["\']?\s*[:=]\s*["\']?([^\'"\n{{}}]+)["\']?',
+            text, re.IGNORECASE
+        )
+        if m:
+            result[key] = m.group(1).strip().rstrip(",")
+
+    score_m = re.search(
+        r'["\']?Narrative_Score["\']?\s*[:=]\s*(\d{1,3})',
+        text, re.IGNORECASE
+    )
+    if score_m:
+        result["Narrative_Score"] = int(score_m.group(1))
+    elif not result:
+        positive = len(re.findall(r'\b(bullish|strong|growth|upside|buy|catalyst|positive|momentum|beat|surge)\b', text, re.IGNORECASE))
+        negative = len(re.findall(r'\b(bearish|risk|threat|decline|sell|weak|miss|drop|concern|headwind)\b', text, re.IGNORECASE))
+        total = positive + negative
+        if total > 0:
+            result["Narrative_Score"] = int(round((positive / total) * 100))
+
+    return result
 
 
 def _momentum_candidates(n: int = _TOP_N) -> list[str]:
