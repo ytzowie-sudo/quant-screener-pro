@@ -353,6 +353,93 @@ def _render_stock_card(row: pd.Series) -> None:
     """, unsafe_allow_html=True)
 
 
+# ── Live Macro Banner ─────────────────────────────────────────────────────────
+
+@st.cache_data(show_spinner=False, ttl=1800)
+def _fetch_macro() -> dict:
+    import yfinance as yf
+    _MACRO_TICKERS = {
+        "Crude_Oil":    "CL=F",
+        "Gold":         "GC=F",
+        "10Y_Treasury": "^TNX",
+        "VIX":          "^VIX",
+    }
+    macro = {}
+    for name, symbol in _MACRO_TICKERS.items():
+        try:
+            data = yf.Ticker(symbol).history(period="5d")
+            macro[name] = round(float(data["Close"].iloc[-1]), 2) if not data.empty else None
+        except Exception:
+            macro[name] = None
+    try:
+        import requests as _req
+        resp = _req.get(
+            "https://production.dataviz.cnn.io/index/fearandgreed/graphdata",
+            headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.cnn.com/markets/fear-and-greed"},
+            timeout=10,
+        )
+        fg = resp.json()["fear_and_greed"]
+        macro["Fear_Greed_Score"]  = round(float(fg["score"]), 0)
+        macro["Fear_Greed_Rating"] = str(fg["rating"]).title()
+    except Exception:
+        macro["Fear_Greed_Score"]  = None
+        macro["Fear_Greed_Rating"] = None
+    return macro
+
+def _fg_color(score) -> str:
+    if score is None:
+        return "#90A4AE"
+    if score >= 75:
+        return "#4CAF50"
+    if score >= 55:
+        return "#8BC34A"
+    if score >= 45:
+        return "#FFC107"
+    if score >= 25:
+        return "#FF7043"
+    return "#F44336"
+
+_macro = _fetch_macro()
+_fg_score  = _macro.get("Fear_Greed_Score")
+_fg_rating = _macro.get("Fear_Greed_Rating") or "N/A"
+_fg_color_val = _fg_color(_fg_score)
+_fg_str = f"{int(_fg_score)}/100 — {_fg_rating}" if _fg_score is not None else "N/A"
+
+def _mv(key, unit=""):
+    v = _macro.get(key)
+    return f"{v:,.2f}{' ' + unit if unit else ''}" if v is not None else "N/A"
+
+st.markdown(f"""
+<div style="display:flex; gap:1rem; flex-wrap:wrap; margin-bottom:1.2rem;">
+    <div style="flex:1; min-width:140px; background:#0D1B2A; border:1px solid #1E3A5F;
+                border-radius:8px; padding:0.7rem 1rem;">
+        <div style="font-size:0.65rem; color:#546E7A; letter-spacing:0.1em;">CRUDE OIL (WTI)</div>
+        <div style="font-size:1.1rem; font-weight:700; color:#FFF;">{_mv("Crude_Oil")} <span style="font-size:0.7rem;color:#546E7A;">$/bbl</span></div>
+    </div>
+    <div style="flex:1; min-width:140px; background:#0D1B2A; border:1px solid #1E3A5F;
+                border-radius:8px; padding:0.7rem 1rem;">
+        <div style="font-size:0.65rem; color:#546E7A; letter-spacing:0.1em;">GOLD</div>
+        <div style="font-size:1.1rem; font-weight:700; color:#FFF;">{_mv("Gold")} <span style="font-size:0.7rem;color:#546E7A;">$/oz</span></div>
+    </div>
+    <div style="flex:1; min-width:140px; background:#0D1B2A; border:1px solid #1E3A5F;
+                border-radius:8px; padding:0.7rem 1rem;">
+        <div style="font-size:0.65rem; color:#546E7A; letter-spacing:0.1em;">10Y TREASURY</div>
+        <div style="font-size:1.1rem; font-weight:700; color:#FFF;">{_mv("10Y_Treasury")} <span style="font-size:0.7rem;color:#546E7A;">%</span></div>
+    </div>
+    <div style="flex:1; min-width:140px; background:#0D1B2A; border:1px solid #1E3A5F;
+                border-radius:8px; padding:0.7rem 1rem;">
+        <div style="font-size:0.65rem; color:#546E7A; letter-spacing:0.1em;">VIX</div>
+        <div style="font-size:1.1rem; font-weight:700; color:#FFF;">{_mv("VIX")} <span style="font-size:0.7rem;color:#546E7A;">pts</span></div>
+    </div>
+    <div style="flex:1; min-width:160px; background:#0D1B2A; border:1px solid {_fg_color_val};
+                border-radius:8px; padding:0.7rem 1rem;">
+        <div style="font-size:0.65rem; color:#546E7A; letter-spacing:0.1em;">FEAR &amp; GREED INDEX</div>
+        <div style="font-size:1.1rem; font-weight:700; color:{_fg_color_val};">{_fg_str}</div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 
 tabs = st.tabs(list(_SHEET_MAP.keys()))

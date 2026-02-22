@@ -141,11 +141,37 @@ def get_global_universe() -> pd.DataFrame:
     return df
 
 
+def _fetch_fear_greed() -> dict:
+    """
+    Fetches the CNN Fear & Greed Index (current score + rating).
+    Returns dict with keys: Fear_Greed_Score (0-100), Fear_Greed_Rating (str).
+    Falls back to None on any error.
+    """
+    try:
+        url = "https://production.dataviz.cnn.io/index/fearandgreed/graphdata"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+            "Referer": "https://www.cnn.com/markets/fear-and-greed",
+        }
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        score  = data["fear_and_greed"]["score"]
+        rating = data["fear_and_greed"]["rating"]
+        return {
+            "Fear_Greed_Score":  round(float(score), 1),
+            "Fear_Greed_Rating": str(rating).title(),
+        }
+    except Exception:
+        return {"Fear_Greed_Score": None, "Fear_Greed_Rating": None}
+
+
 def analyze_macro_environment() -> dict:
     """
     Fetches the latest available closing price for Crude Oil, Gold, 10Y Treasury
     Yield, and the VIX from Yahoo Finance. Uses a 5-day window so the last
     available bar is always returned even on weekends or holidays.
+    Also fetches the CNN Fear & Greed Index.
     """
     macro = {}
     for name, symbol in _MACRO_TICKERS.items():
@@ -157,6 +183,7 @@ def analyze_macro_environment() -> dict:
                 macro[name] = None
         except Exception:
             macro[name] = None
+    macro.update(_fetch_fear_greed())
     return macro
 
 
@@ -175,6 +202,10 @@ def _macro_dashboard(macro: dict) -> None:
         value = macro.get(key)
         display = f"{value:.2f} {unit}" if value is not None else "N/A"
         print(f"  {label:<26} {display}")
+    fg_score  = macro.get("Fear_Greed_Score")
+    fg_rating = macro.get("Fear_Greed_Rating") or "N/A"
+    fg_display = f"{fg_score:.0f}/100  ({fg_rating})" if fg_score is not None else "N/A"
+    print(f"  {'Fear & Greed Index':<26} {fg_display}")
     print("=" * 45 + "\n")
 
 
