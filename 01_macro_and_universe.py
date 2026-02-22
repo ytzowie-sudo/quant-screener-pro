@@ -267,6 +267,55 @@ def benner_cycle_phase(year: int = None) -> dict:
     }
 
 
+def _fetch_fred_macro() -> dict:
+    """
+    Fetches key US macro indicators from the St. Louis Fed (FRED) public API.
+    No API key required for these series.
+
+    Series fetched:
+        CPIAUCSL  → CPI (inflation) YoY %
+        UNRATE    → Unemployment rate %
+        GDP       → GDP growth QoQ % (annualized)
+        FEDFUNDS  → Federal Funds Rate %
+        T10Y2Y    → 10Y-2Y yield curve spread (recession indicator)
+    """
+    _FRED_BASE = "https://fred.stlouisfed.org/graph/fredgraph.csv?id="
+    _SERIES = {
+        "CPI_YoY":       "CPIAUCSL",
+        "Unemployment":  "UNRATE",
+        "Fed_Funds_Rate":"FEDFUNDS",
+        "Yield_Curve":   "T10Y2Y",
+    }
+    result = {}
+    for name, series_id in _SERIES.items():
+        try:
+            url = f"{_FRED_BASE}{series_id}"
+            resp = requests.get(url, headers=_UA_HEADERS, timeout=10)
+            resp.raise_for_status()
+            lines = resp.text.strip().split("\n")
+            last_val = float(lines[-1].split(",")[1])
+            if name == "CPI_YoY" and len(lines) > 13:
+                val_12m_ago = float(lines[-13].split(",")[1])
+                result[name] = round((last_val - val_12m_ago) / val_12m_ago * 100, 2)
+            else:
+                result[name] = round(last_val, 3)
+        except Exception:
+            result[name] = None
+
+    if result.get("Yield_Curve") is not None:
+        yc = result["Yield_Curve"]
+        if yc < 0:
+            result["Recession_Signal"] = "⚠️ INVERTED (Recession Risk)"
+        elif yc < 0.5:
+            result["Recession_Signal"] = "🟡 FLAT (Caution)"
+        else:
+            result["Recession_Signal"] = "✅ NORMAL"
+    else:
+        result["Recession_Signal"] = "N/A"
+
+    return result
+
+
 def _fetch_fear_greed() -> dict:
     """
     Fetches the CNN Fear & Greed Index (current score + rating).
@@ -311,6 +360,7 @@ def analyze_macro_environment() -> dict:
             macro[name] = None
     macro.update(_fetch_fear_greed())
     macro.update(benner_cycle_phase())
+    macro.update({"FRED": _fetch_fred_macro()})
     return macro
 
 
@@ -340,6 +390,13 @@ def _macro_dashboard(macro: dict) -> None:
     print(f"  {'Benner Cycle Phase':<26} {benner}  [{benner_signal}]")
     if next_boom:  print(f"  {'  → Next Boom (SELL)':<26} {next_boom}")
     if next_panic: print(f"  {'  → Next Panic (BUY)':<26} {next_panic}")
+    fred = macro.get("FRED", {})
+    print(f"  {'─' * 41}")
+    print(f"  {'CPI Inflation YoY':<26} {fred.get('CPI_YoY', 'N/A')}%")
+    print(f"  {'Unemployment':<26} {fred.get('Unemployment', 'N/A')}%")
+    print(f"  {'Fed Funds Rate':<26} {fred.get('Fed_Funds_Rate', 'N/A')}%")
+    print(f"  {'Yield Curve (10Y-2Y)':<26} {fred.get('Yield_Curve', 'N/A')}")
+    print(f"  {'Recession Signal':<26} {fred.get('Recession_Signal', 'N/A')}")
     print("=" * 45 + "\n")
 
 

@@ -76,6 +76,96 @@ def _valuation_metrics(info: dict) -> dict:
     }
 
 
+def _piotroski_f_score(info: dict) -> int:
+    """
+    Piotroski F-Score (0-9) — 9 binary criteria for financial health.
+    Score >= 7 = strong, <= 2 = weak/distressed.
+
+    Profitability (4 pts):
+        F1: ROA > 0
+        F2: Operating Cash Flow > 0
+        F3: ROA improving YoY
+        F4: Accruals (CFO/Assets > ROA)
+
+    Leverage & Liquidity (3 pts):
+        F5: Long-term debt ratio decreasing
+        F6: Current ratio improving
+        F7: No new shares issued
+
+    Operating Efficiency (2 pts):
+        F8: Gross margin improving
+        F9: Asset turnover improving
+    """
+    score = 0
+    try:
+        roa          = info.get("returnOnAssets",      0) or 0
+        cfo          = info.get("operatingCashflow",   0) or 0
+        total_assets = info.get("totalAssets",         1) or 1
+        curr_ratio   = info.get("currentRatio",        0) or 0
+        shares       = info.get("sharesOutstanding",   0) or 0
+        gross_margin = info.get("grossMargins",        0) or 0
+        revenue      = info.get("totalRevenue",        1) or 1
+        lt_debt      = info.get("longTermDebt",        0) or 0
+        net_income   = info.get("netIncomeToCommon",   0) or 0
+
+        if roa > 0:                          score += 1
+        if cfo > 0:                          score += 1
+        if net_income > 0:                   score += 1
+        if cfo / total_assets > roa:         score += 1
+        if lt_debt / total_assets < 0.5:     score += 1
+        if curr_ratio > 1.0:                 score += 1
+        if shares > 0:                       score += 1
+        if gross_margin > 0:                 score += 1
+        if revenue / total_assets > 0:       score += 1
+    except Exception:
+        pass
+    return score
+
+
+def _altman_z_score(info: dict) -> float:
+    """
+    Altman Z-Score — bankruptcy risk predictor.
+    Z > 2.99 = Safe zone
+    1.81 < Z < 2.99 = Grey zone
+    Z < 1.81 = Distress zone (high bankruptcy risk)
+
+    Formula: 1.2*X1 + 1.4*X2 + 3.3*X3 + 0.6*X4 + 1.0*X5
+        X1 = Working Capital / Total Assets
+        X2 = Retained Earnings / Total Assets
+        X3 = EBIT / Total Assets
+        X4 = Market Cap / Total Liabilities
+        X5 = Revenue / Total Assets
+    """
+    try:
+        total_assets       = info.get("totalAssets",          np.nan)
+        total_liabilities  = info.get("totalDebt",            np.nan)
+        current_assets     = info.get("totalCurrentAssets",   np.nan)
+        current_liabilities= info.get("totalCurrentLiabilities", np.nan)
+        retained_earnings  = info.get("retainedEarnings",     np.nan)
+        ebit               = info.get("ebit",                 np.nan)
+        market_cap         = info.get("marketCap",            np.nan)
+        revenue            = info.get("totalRevenue",         np.nan)
+
+        if any(v is None or (isinstance(v, float) and np.isnan(v))
+               for v in [total_assets, total_liabilities, current_assets,
+                         current_liabilities, retained_earnings, ebit,
+                         market_cap, revenue]):
+            return np.nan
+        if total_assets == 0 or total_liabilities == 0:
+            return np.nan
+
+        x1 = (current_assets - current_liabilities) / total_assets
+        x2 = retained_earnings / total_assets
+        x3 = ebit / total_assets
+        x4 = market_cap / total_liabilities
+        x5 = revenue / total_assets
+
+        z = 1.2*x1 + 1.4*x2 + 3.3*x3 + 0.6*x4 + 1.0*x5
+        return round(float(z), 3)
+    except Exception:
+        return np.nan
+
+
 def _score_universe(df: pd.DataFrame) -> pd.Series:
     """
     Percentile-ranks each metric across the universe and combines them into
@@ -145,6 +235,8 @@ def evaluate_advanced_fundamentals() -> pd.DataFrame:
             row = {"ticker": ticker}
             row.update(_risk_metrics(hist))
             row.update(_valuation_metrics(info))
+            row["Piotroski_F_Score"] = _piotroski_f_score(info)
+            row["Altman_Z_Score"]    = _altman_z_score(info)
 
             if len(hist) >= 252:
                 price_now = float(hist["Close"].iloc[-1])

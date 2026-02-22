@@ -1,4 +1,58 @@
+import numpy as np
 import pandas as pd
+
+
+def _kelly_criterion(win_rate: float, avg_win: float, avg_loss: float) -> float:
+    """
+    Kelly Criterion — optimal fraction of capital to allocate.
+    f* = (p * b - q) / b
+        p = win probability
+        b = avg win / avg loss ratio
+        q = 1 - p (loss probability)
+
+    Uses conservative half-Kelly to reduce variance.
+    Returns a % between 0 and 25% (capped for safety).
+    """
+    try:
+        if avg_loss == 0 or win_rate <= 0 or win_rate >= 1:
+            return 5.0
+        b = avg_win / avg_loss
+        q = 1 - win_rate
+        kelly = (win_rate * b - q) / b
+        half_kelly = kelly / 2
+        return round(max(0.0, min(half_kelly * 100, 25.0)), 1)
+    except Exception:
+        return 5.0
+
+
+def _add_kelly(df: pd.DataFrame, portfolio_type: str) -> pd.DataFrame:
+    """
+    Adds a Kelly_Position_Pct column based on portfolio type assumptions:
+    - Court Terme : win_rate=0.55, avg_win=0.25, avg_loss=0.08
+    - Moyen Terme : win_rate=0.60, avg_win=0.50, avg_loss=0.15
+    - Long Terme  : win_rate=0.65, avg_win=1.00, avg_loss=0.20
+    Adjusted per stock by Narrative_Score or Deep_Value_Score if available.
+    """
+    params = {
+        "court": (0.55, 0.25, 0.08),
+        "moyen": (0.60, 0.50, 0.15),
+        "long":  (0.65, 1.00, 0.20),
+    }
+    key = "court" if "Court" in portfolio_type else ("moyen" if "Moyen" in portfolio_type else "long")
+    wr, aw, al = params[key]
+    base_kelly = _kelly_criterion(wr, aw, al)
+
+    if "Narrative_Score" in df.columns and key == "court":
+        modifier = (df["Narrative_Score"].fillna(50) - 50) / 500
+    elif "Deep_Value_Score" in df.columns and key == "long":
+        modifier = (df["Deep_Value_Score"].fillna(50) - 50) / 500
+    elif "Quant_Risk_Score" in df.columns:
+        modifier = (df["Quant_Risk_Score"].fillna(50) - 50) / 500
+    else:
+        modifier = pd.Series(0.0, index=df.index)
+
+    df["Kelly_Position_Pct"] = (base_kelly + modifier * 100).clip(1.0, 25.0).round(1)
+    return df
 
 _OUTPUT_COLS = [
     "ticker",
@@ -37,6 +91,10 @@ _OUTPUT_COLS = [
     "Catalysts",
     "Threats",
     "AI_Impact",
+    "Kelly_Position_Pct",
+    "Piotroski_F_Score",
+    "Altman_Z_Score",
+    "Beta",
 ]
 
 _OUTPUT_FILE = "Hedge_Fund_Master_Strategy.xlsx"
@@ -114,6 +172,10 @@ def build_portfolios(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
         .head(5)[available]
         .reset_index(drop=True)
     )
+
+    short_term  = _add_kelly(short_term,  "Court Terme")
+    medium_term = _add_kelly(medium_term, "Moyen Terme")
+    long_term   = _add_kelly(long_term,   "Long Terme")
 
     return {
         "Court Terme (Catalysts)": short_term,

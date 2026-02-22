@@ -455,6 +455,30 @@ def _fetch_macro() -> dict:
     except Exception:
         macro["Fear_Greed_Score"]  = None
         macro["Fear_Greed_Rating"] = None
+
+    _FRED_BASE = "https://fred.stlouisfed.org/graph/fredgraph.csv?id="
+    _FRED_SERIES = {"CPI_YoY": "CPIAUCSL", "Unemployment": "UNRATE",
+                    "Fed_Funds_Rate": "FEDFUNDS", "Yield_Curve": "T10Y2Y"}
+    for fname, fid in _FRED_SERIES.items():
+        try:
+            import requests as _req2
+            r = _req2.get(f"{_FRED_BASE}{fid}", timeout=10)
+            lines = r.text.strip().split("\n")
+            last_val = float(lines[-1].split(",")[1])
+            if fname == "CPI_YoY" and len(lines) > 13:
+                val_12m = float(lines[-13].split(",")[1])
+                macro[fname] = round((last_val - val_12m) / val_12m * 100, 2)
+            else:
+                macro[fname] = round(last_val, 3)
+        except Exception:
+            macro[fname] = None
+
+    yc = macro.get("Yield_Curve")
+    if yc is not None:
+        macro["Recession_Signal"] = "⚠️ INVERTED" if yc < 0 else ("🟡 FLAT" if yc < 0.5 else "✅ NORMAL")
+    else:
+        macro["Recession_Signal"] = "N/A"
+
     return macro
 
 def _fg_color(score) -> str:
@@ -540,6 +564,46 @@ st.markdown(f"""
         <div style="font-size:0.65rem; color:#546E7A; letter-spacing:0.1em;">BENNER CYCLE</div>
         <div style="font-size:0.95rem; font-weight:700; color:{_bn_color};">{_bn_phase}</div>
         <div style="font-size:0.7rem; color:#546E7A; margin-top:2px;">{_bn_sub}</div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+_fred_cpi  = _macro.get("CPI_YoY")
+_fred_unem = _macro.get("Unemployment")
+_fred_fed  = _macro.get("Fed_Funds_Rate")
+_fred_yc   = _macro.get("Yield_Curve")
+_fred_rec  = _macro.get("Recession_Signal", "N/A")
+_fred_yc_color = "#F44336" if _fred_yc is not None and _fred_yc < 0 else ("#FFC107" if _fred_yc is not None and _fred_yc < 0.5 else "#4CAF50")
+
+def _fv(v, suffix=""):
+    return f"{v}{suffix}" if v is not None else "N/A"
+
+st.markdown(f"""
+<div style="display:flex; gap:0.7rem; flex-wrap:wrap; margin-bottom:1.2rem;">
+    <div style="flex:1; min-width:120px; background:#0D1B2A; border:1px solid #1E3A5F;
+                border-radius:8px; padding:0.6rem 0.9rem;">
+        <div style="font-size:0.6rem; color:#546E7A; letter-spacing:0.1em;">CPI INFLATION YoY</div>
+        <div style="font-size:1rem; font-weight:700; color:#FFF;">{_fv(_fred_cpi, "%")}</div>
+    </div>
+    <div style="flex:1; min-width:120px; background:#0D1B2A; border:1px solid #1E3A5F;
+                border-radius:8px; padding:0.6rem 0.9rem;">
+        <div style="font-size:0.6rem; color:#546E7A; letter-spacing:0.1em;">CHÔMAGE US</div>
+        <div style="font-size:1rem; font-weight:700; color:#FFF;">{_fv(_fred_unem, "%")}</div>
+    </div>
+    <div style="flex:1; min-width:120px; background:#0D1B2A; border:1px solid #1E3A5F;
+                border-radius:8px; padding:0.6rem 0.9rem;">
+        <div style="font-size:0.6rem; color:#546E7A; letter-spacing:0.1em;">FED FUNDS RATE</div>
+        <div style="font-size:1rem; font-weight:700; color:#FFF;">{_fv(_fred_fed, "%")}</div>
+    </div>
+    <div style="flex:1; min-width:120px; background:#0D1B2A; border:1px solid {_fred_yc_color};
+                border-radius:8px; padding:0.6rem 0.9rem;">
+        <div style="font-size:0.6rem; color:#546E7A; letter-spacing:0.1em;">YIELD CURVE (10Y-2Y)</div>
+        <div style="font-size:1rem; font-weight:700; color:{_fred_yc_color};">{_fv(_fred_yc)}</div>
+    </div>
+    <div style="flex:2; min-width:180px; background:#0D1B2A; border:1px solid {_fred_yc_color};
+                border-radius:8px; padding:0.6rem 0.9rem;">
+        <div style="font-size:0.6rem; color:#546E7A; letter-spacing:0.1em;">SIGNAL RÉCESSION (FRED)</div>
+        <div style="font-size:0.95rem; font-weight:700; color:{_fred_yc_color};">{_fred_rec}</div>
     </div>
 </div>
 """, unsafe_allow_html=True)

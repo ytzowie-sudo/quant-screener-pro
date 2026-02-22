@@ -217,6 +217,34 @@ def _commodity_adjustment(sector: str, macro: dict) -> int:
 # Per-ticker computation
 # ---------------------------------------------------------------------------
 
+_SPY_RETURNS_CACHE: pd.Series | None = None
+
+def _get_spy_returns() -> pd.Series:
+    """Fetches SPY 1Y daily returns once and caches them."""
+    global _SPY_RETURNS_CACHE
+    if _SPY_RETURNS_CACHE is None:
+        try:
+            spy = yf.Ticker("SPY").history(period="1y")["Close"]
+            _SPY_RETURNS_CACHE = spy.pct_change().dropna()
+        except Exception:
+            _SPY_RETURNS_CACHE = pd.Series(dtype=float)
+    return _SPY_RETURNS_CACHE
+
+
+def _beta(stock_returns: pd.Series) -> float:
+    """Calculates Beta vs SPY. Beta > 1 = more volatile than market."""
+    try:
+        spy_ret = _get_spy_returns()
+        aligned = pd.concat([stock_returns, spy_ret], axis=1).dropna()
+        if len(aligned) < 30:
+            return np.nan
+        cov = aligned.cov().iloc[0, 1]
+        var = aligned.iloc[:, 1].var()
+        return round(cov / var, 3) if var != 0 else np.nan
+    except Exception:
+        return np.nan
+
+
 def _compute_metrics(ticker: str, macro: dict) -> dict:
     """Downloads 1y of OHLCV data and computes all quant metrics."""
     base = {
@@ -226,6 +254,7 @@ def _compute_metrics(ticker: str, macro: dict) -> dict:
         "VaR_95":             np.nan,
         "Ann_Volatility":     np.nan,
         "Hurst_Exponent":     np.nan,
+        "Beta":               np.nan,
         "Stoch_K":            np.nan,
         "Stoch_D":            np.nan,
         "Bullish_Divergence": False,
@@ -265,6 +294,8 @@ def _compute_metrics(ticker: str, macro: dict) -> dict:
         commodity_adj = _commodity_adjustment(sector, macro)
         tv_rec        = _tradingview_rec(ticker)
 
+        beta = _beta(daily_ret)
+
         return {
             "VWAP":               round(vwap,           4),
             "Last_Price":         round(last_price,      2),
@@ -272,6 +303,7 @@ def _compute_metrics(ticker: str, macro: dict) -> dict:
             "VaR_95":             round(var_95,           4),
             "Ann_Volatility":     round(ann_vol,          4),
             "Hurst_Exponent":     hurst,
+            "Beta":               beta,
             "Stoch_K":            round(float(stoch_k.iloc[-1]), 2) if not np.isnan(stoch_k.iloc[-1]) else np.nan,
             "Stoch_D":            round(float(stoch_d.iloc[-1]), 2) if not np.isnan(stoch_d.iloc[-1]) else np.nan,
             "Bullish_Divergence": divergence,
@@ -359,7 +391,7 @@ def run_quant_models() -> pd.DataFrame:
 
     export_cols = [
         "ticker", "VWAP", "Last_Price", "Price_vs_VWAP", "VaR_95",
-        "Ann_Volatility", "Hurst_Exponent", "Stoch_K", "Stoch_D",
+        "Ann_Volatility", "Hurst_Exponent", "Beta", "Stoch_K", "Stoch_D",
         "Bullish_Divergence", "Sector", "Commodity_Adj",
         "TradingView_Rec", "Quant_Risk_Score",
     ]
