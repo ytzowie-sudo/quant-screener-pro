@@ -44,6 +44,17 @@ def _risk_metrics(hist: pd.DataFrame) -> dict:
         }
 
 
+def _fmt_earnings_date(ts) -> str:
+    """Converts a Unix timestamp (int) to 'YYYY-MM-DD'. Returns '' on failure."""
+    if not ts:
+        return ""
+    try:
+        import datetime
+        return datetime.datetime.utcfromtimestamp(int(ts)).strftime("%Y-%m-%d")
+    except Exception:
+        return ""
+
+
 def _valuation_metrics(info: dict) -> dict:
     """Extracts deep valuation, growth, health, and catalyst metrics from yfinance info."""
     return {
@@ -65,7 +76,7 @@ def _valuation_metrics(info: dict) -> dict:
         "Payout_Ratio":        info.get("payoutRatio",            np.nan),
         "Book_Value":          info.get("bookValue",              np.nan),
         "Price_to_Book":       info.get("priceToBook",            np.nan),
-        "Earnings_Date":       str(info.get("earningsTimestamp",  "") or ""),
+        "Earnings_Date":       _fmt_earnings_date(info.get("earningsTimestamp")),
         "Analyst_Target":      info.get("targetMeanPrice",        np.nan),
         "Analyst_Rec":         info.get("recommendationMean",     np.nan),
         "Num_Analyst_Opinions":info.get("numberOfAnalystOpinions",np.nan),

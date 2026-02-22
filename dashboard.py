@@ -475,8 +475,8 @@ def _fetch_macro() -> dict:
                     "Fed_Funds_Rate": "FEDFUNDS", "Yield_Curve": "T10Y2Y"}
     for fname, fid in _FRED_SERIES.items():
         try:
-            import requests as _req2
-            r = _req2.get(f"{_FRED_BASE}{fid}", timeout=10)
+            import requests as _req
+            r = _req.get(f"{_FRED_BASE}{fid}", timeout=10)
             lines = r.text.strip().split("\n")
             last_val = float(lines[-1].split(",")[1])
             if fname == "CPI_YoY" and len(lines) > 13:

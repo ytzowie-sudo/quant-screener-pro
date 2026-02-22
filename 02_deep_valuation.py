@@ -57,10 +57,10 @@ def _score_universe(df: pd.DataFrame) -> pd.Series:
     score = (
         pct("Margin_of_Safety")          * 35
         + pct("Institutional_Ownership") * 20
-        + pct("Insider_Ownership")       * 15
+        + pct("Insider_Ownership")       * 10
         + pct("Free_Cashflow")           * 15
-        + pct("ROE")                     * 15
-        + pct("Debt_to_Equity", True)    *  0
+        + pct("ROE")                     * 10
+        + pct("Debt_to_Equity", True)    * 10
     )
     return score.round(2)
 

@@ -141,8 +141,10 @@ def build_portfolios(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
         mt_mask &= df["Hurst_Exponent"] > 0.5
     if "Price_vs_VWAP" in df.columns:
         mt_mask &= df["Price_vs_VWAP"] > 0
-    if "Last_Price" in df.columns and "SMA_200" in df.columns:
-        mt_mask &= df["Last_Price"] > df["SMA_200"]
+    if "SMA_200" in df.columns:
+        price_col = "Last_Price" if "Last_Price" in df.columns else ("Current_Price" if "Current_Price" in df.columns else None)
+        if price_col:
+            mt_mask &= df[price_col].fillna(0) > df["SMA_200"].fillna(0)
     medium_candidates = df[mt_mask].copy()
     if medium_candidates.empty:
         medium_candidates = df.copy()
