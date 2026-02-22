@@ -174,6 +174,7 @@ with col2:
                     st.error(f"❌ Pipeline échoué (code {result.returncode})")
                     st.code(result.stderr or result.stdout or "Aucun log disponible.")
                 else:
+                    st.cache_data.clear()
                     st.success("✅ Terminé !")
                     time.sleep(1)
                     st.rerun()
