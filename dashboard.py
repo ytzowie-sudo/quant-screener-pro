@@ -162,7 +162,7 @@ _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 col1, col2, col3 = st.columns([1, 2, 1])
 with col2:
     if st.button("🔄 LANCER LA MISE À JOUR DU MARCHÉ (5-10 min)", type="primary", use_container_width=True):
-        with st.spinner("Exécution des 9 moteurs quantitatifs... (5-10 min)"):
+        with st.spinner("Exécution des 10 moteurs quantitatifs... (5-10 min)"):
             try:
                 result = subprocess.run(
                     [sys.executable, "run_fund.py"],
@@ -185,6 +185,7 @@ st.markdown("<hr>", unsafe_allow_html=True)
 
 # ── Data loading ──────────────────────────────────────────────────────────────
 
+@st.cache_data(show_spinner=False, ttl=300)
 def load_data() -> dict[str, pd.DataFrame]:
     xl = pd.ExcelFile(_EXCEL_FILE)
     return {tab: pd.read_excel(xl, sheet) for tab, sheet in _SHEET_MAP.items()}
@@ -369,7 +370,7 @@ def _render_stock_card(row: pd.Series) -> None:
 
 # ── Live Macro Banner ─────────────────────────────────────────────────────────
 
-@st.cache_data(show_spinner=False, ttl=1800)
+@st.cache_data(show_spinner=False, ttl=900)
 def _fetch_sector_rotation() -> list:
     _SECTORS = {
         "Tech":        "XLK",
@@ -404,7 +405,7 @@ def _fetch_sector_rotation() -> list:
     return results
 
 
-@st.cache_data(show_spinner=False, ttl=1800)
+@st.cache_data(show_spinner=False, ttl=900)
 def _fetch_capital_flows() -> dict:
     _FLOW_ETFS = {
         "🇺🇸 US":       "SPY",
@@ -440,7 +441,7 @@ def _fetch_capital_flows() -> dict:
     return {"flows": flows, "dominant": dominant, "weakest": weakest}
 
 
-@st.cache_data(show_spinner=False, ttl=1800)
+@st.cache_data(show_spinner=False, ttl=900)
 def _fetch_macro() -> dict:
     import yfinance as yf
     _MACRO_TICKERS = {

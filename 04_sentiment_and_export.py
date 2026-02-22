@@ -34,11 +34,36 @@ _REPORT_COLS = [
 _EXCHANGES = ["NASDAQ", "NYSE", "AMEX"]
 
 
+def _is_us_ticker(ticker: str) -> bool:
+    """Returns True if ticker has no international exchange suffix."""
+    return "." not in ticker and "-" not in ticker or ticker in {"BRK-A", "BRK-B", "BF-A", "BF-B"}
+
+
+def _scrape_yahoo_headlines(ticker: str) -> list[str]:
+    """
+    Fetches latest headlines from Yahoo Finance RSS feed.
+    Used as fallback for non-US tickers that Finviz doesn't cover.
+    """
+    try:
+        url = f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={ticker}&region=US&lang=en-US"
+        response = requests.get(url, headers=_HEADERS, timeout=10)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, "xml")
+        items = soup.find_all("item")[:15]
+        return [item.find("title").get_text(strip=True)[:512] for item in items if item.find("title")]
+    except Exception:
+        return []
+
+
 def _scrape_finviz_headlines(ticker: str) -> list[str]:
     """
-    Scrapes the latest 15 Finviz headlines for a ticker.
+    Scrapes the latest 15 Finviz headlines for US tickers.
+    Falls back to Yahoo Finance RSS for international tickers (.DE, .MI, .PA etc.).
     Returns an empty list on any failure.
     """
+    if not _is_us_ticker(ticker):
+        return _scrape_yahoo_headlines(ticker)
+
     url = f"https://finviz.com/quote.ashx?t={ticker}"
     try:
         response = requests.get(url, headers=_HEADERS, timeout=10)
@@ -46,7 +71,7 @@ def _scrape_finviz_headlines(ticker: str) -> list[str]:
         soup = BeautifulSoup(response.text, "lxml")
         news_table = soup.find("table", id="news-table")
         if news_table is None:
-            return []
+            return _scrape_yahoo_headlines(ticker)
         headlines = []
         for row in news_table.find_all("tr")[:15]:
             cells = row.find_all("td")
@@ -54,10 +79,10 @@ def _scrape_finviz_headlines(ticker: str) -> list[str]:
                 text = cells[1].get_text(strip=True)
                 if text:
                     headlines.append(text[:512])
-        return headlines
+        return headlines if headlines else _scrape_yahoo_headlines(ticker)
     except Exception as e:
         print(f"  [WARNING] Finviz fetch failed for {ticker}: {e}")
-        return []
+        return _scrape_yahoo_headlines(ticker)
 
 
 def _finbert_score(headlines: list[str], finbert) -> float:
