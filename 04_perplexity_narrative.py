@@ -181,12 +181,39 @@ def run_narrative_analysis() -> pd.DataFrame:
     except FileNotFoundError:
         pass
 
-    # ── COURT TERME pool: momentum + short squeeze candidates ─────────────────
-    ct_df = df.copy()
-    if "Momentum_1Y" in ct_df.columns:
-        ct_df = ct_df[ct_df["Momentum_1Y"] >= ct_df["Momentum_1Y"].median()]
-    ct_pool = ct_df.nlargest(10, "Quant_Risk_Score").copy()
+    # ── COURT TERME pool: explosive short-term candidates ────────────────────
+    # Pull from full fundamentals universe (not just top-100 quant)
+    # CT_Score = Beta*30 + Momentum_1Y*40 + Short_Interest*30
+    # Targets: high-beta mid/small caps with strong momentum + squeeze potential
+    try:
+        ct_source = pd.read_csv("fundamentals.csv")
+        # Enrich with quant data (Hurst, Bullish_Divergence, Quant_Risk_Score)
+        try:
+            qt = pd.read_csv("quant_risk.csv")
+            qt_add = [c for c in qt.columns if c not in ct_source.columns and c != "ticker"]
+            ct_source = ct_source.merge(qt[["ticker"] + qt_add], on="ticker", how="left")
+        except Exception:
+            pass
+        ct_df = ct_source.copy()
+    except FileNotFoundError:
+        ct_df = df.copy()
+
+    # Compute CT_Score: reward high momentum, high beta, high short interest
+    ct_df = ct_df.copy()
+    mom  = ct_df["Momentum_1Y"].fillna(0).clip(0, 300)
+    beta = ct_df["Beta"].fillna(1).clip(0, 4) if "Beta" in ct_df.columns else 1
+    si   = ct_df["Short_Interest_Pct"].fillna(0).clip(0, 0.5) if "Short_Interest_Pct" in ct_df.columns else 0
+    ct_df["CT_Score"] = (
+        (mom  / mom.max())  * 40
+        + (beta / 4)        * 30
+        + (si   / 0.5)      * 30
+    )
+    # Minimum quality gate: Quant_Risk_Score > 30 if available
+    if "Quant_Risk_Score" in ct_df.columns:
+        ct_df = ct_df[ct_df["Quant_Risk_Score"].fillna(0) > 30]
+    ct_pool = ct_df.nlargest(10, "CT_Score").copy()
     ct_pool["_pool"] = "court"
+    print(f"  CT pool top 5: {ct_pool['ticker'].head(5).tolist()} (CT_Score range {ct_pool['CT_Score'].min():.1f}-{ct_pool['CT_Score'].max():.1f})")
 
     # ── MOYEN TERME pool: trending + outperforming market ─────────────────────
     mt_df = df.copy()

@@ -144,11 +144,14 @@ def build_portfolios(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
     ct_sort = []
     if "_bd_int" in ct_cands.columns:
         ct_sort.append("_bd_int")
-    if narr_std > 2 and "Narrative_Score" in ct_cands.columns:
+    if "CT_Score" in ct_cands.columns:
+        ct_sort.append("CT_Score")
+    elif narr_std > 2 and "Narrative_Score" in ct_cands.columns:
         ct_sort.append("Narrative_Score")
     elif "Ultimate_Conviction_Score" in ct_cands.columns:
         ct_sort.append("Ultimate_Conviction_Score")
-    ct_sort.append("Quant_Risk_Score")
+    if "Quant_Risk_Score" in ct_cands.columns:
+        ct_sort.append("Quant_Risk_Score")
     short_term = (
         ct_cands.sort_values(ct_sort, ascending=[False] * len(ct_sort))
         .head(5)[available].reset_index(drop=True)
