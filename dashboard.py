@@ -157,20 +157,28 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
 col1, col2, col3 = st.columns([1, 2, 1])
 with col2:
     if st.button("🔄 LANCER LA MISE À JOUR DU MARCHÉ (5-10 min)", type="primary", use_container_width=True):
         with st.spinner("Exécution des 9 moteurs quantitatifs... (5-10 min)"):
             try:
-                subprocess.run([sys.executable, "run_fund.py"], check=True)
-                st.success("✅ Terminé !")
-                time.sleep(1)
-                st.rerun()
-            except subprocess.CalledProcessError as exc:
-                st.error(
-                    f"❌ Pipeline échoué (code {exc.returncode}).\n"
-                    "Vérifiez les logs dans le terminal."
+                result = subprocess.run(
+                    [sys.executable, "run_fund.py"],
+                    cwd=_SCRIPT_DIR,
+                    capture_output=True,
+                    text=True,
                 )
+                if result.returncode != 0:
+                    st.error(f"❌ Pipeline échoué (code {result.returncode})")
+                    st.code(result.stderr or result.stdout or "Aucun log disponible.")
+                else:
+                    st.success("✅ Terminé !")
+                    time.sleep(1)
+                    st.rerun()
+            except Exception as exc:
+                st.error(f"❌ Erreur inattendue : {exc}")
 
 st.markdown("<hr>", unsafe_allow_html=True)
 
