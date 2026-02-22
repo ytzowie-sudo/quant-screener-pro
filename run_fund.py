@@ -3,14 +3,15 @@ import sys
 import time
 
 _PIPELINE = [
-    ("01_macro_and_universe.py",    "Macro & Universe  → global_universe.csv"),
-    ("01_data_loader.py",           "Data Loader       → data_loaded.csv"),
-    ("02_fundamentals.py",          "Fundamentals       → fundamentals.csv"),
-    ("02_deep_valuation.py",        "Deep Valuation     → deep_valuation.csv"),
-    ("03_technicals.py",            "Technicals         → technicals.csv"),
-    ("03_quant_risk_models.py",     "Quant Risk Models  → quant_risk.csv"),
-    ("04_sentiment_and_export.py",  "FinBERT Sentiment  → sentiment.csv"),
-    ("04_perplexity_narrative.py",  "Perplexity AI      → ai_narrative.csv"),
+    ("01_macro_and_universe.py",    "Macro & Universe   → global_universe.csv"),
+    ("01_data_loader.py",           "Data Loader        → data_loaded.csv"),
+    ("02_fundamentals.py",          "Fundamentals        → fundamentals.csv"),
+    ("02_deep_valuation.py",        "Deep Valuation      → deep_valuation.csv"),
+    ("03_technicals.py",            "Technicals          → technicals.csv"),
+    ("03_quant_risk_models.py",     "Quant Risk Models   → quant_risk.csv"),
+    ("04_sentiment_and_export.py",  "FinBERT Sentiment   → sentiment.csv"),
+    ("04_event_driven.py",          "Event-Driven Track  → event_driven.csv"),
+    ("04_perplexity_narrative.py",  "Perplexity AI       → ai_narrative.csv"),
     ("05_portfolio_allocator.py",   "Portfolio Allocator → Excel"),
 ]
 
@@ -46,7 +47,7 @@ def _success_banner(elapsed: float) -> None:
     print()
     print("=" * 65)
     print()
-    print("  ✅  ALL 9 PIPELINE STAGES COMPLETED SUCCESSFULLY")
+    print("  ✅  ALL 10 PIPELINE STAGES COMPLETED SUCCESSFULLY")
     print()
     print(f"  📁  Output  →  Hedge_Fund_Master_Strategy.xlsx")
     print(f"  ⏱   Runtime →  {minutes}m {seconds}s")

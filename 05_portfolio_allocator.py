@@ -131,14 +131,31 @@ def export_to_excel(portfolios: dict[str, pd.DataFrame], path: str = _OUTPUT_FIL
 
 def run_portfolio_allocator() -> dict[str, pd.DataFrame]:
     """
-    Reads narrative_analyzed.csv, builds the 3 strategic portfolios,
-    exports to Hedge_Fund_Master_Strategy.xlsx, and returns the portfolios dict.
+    Reads ai_narrative.csv (quant track) and event_driven.csv (event track),
+    merges both, builds the 3 strategic portfolios, and exports to Excel.
+
+    Court Terme uses BOTH tracks merged — best Narrative_Score wins.
+    Long Terme and Moyen Terme remain purely quant-driven.
     """
     df = pd.read_csv("ai_narrative.csv")
     if df.empty:
         print("Error: ai_narrative.csv is empty — run 04_perplexity_narrative.py first.")
         return {}
-    portfolios = build_portfolios(df)
+
+    try:
+        event_df = pd.read_csv("event_driven.csv")
+        if not event_df.empty:
+            combined = pd.concat([df, event_df], ignore_index=True, sort=False)
+            combined.drop_duplicates(subset="ticker", keep="first", inplace=True)
+            combined.reset_index(drop=True, inplace=True)
+            print(f"  Merged quant track ({len(df)}) + event track ({len(event_df)}) → {len(combined)} unique stocks")
+        else:
+            combined = df
+    except FileNotFoundError:
+        combined = df
+        print("  event_driven.csv not found — using quant track only for Court Terme")
+
+    portfolios = build_portfolios(combined)
     export_to_excel(portfolios)
     return portfolios
 
