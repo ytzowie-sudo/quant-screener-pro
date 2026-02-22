@@ -113,105 +113,93 @@ def _pool_candidates(df: pd.DataFrame, pool_tag: str, exclude_tickers: list = No
 
 def build_portfolios(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
     """
-    Builds 3 portfolios from pre-filtered pools (set by 04_perplexity_narrative.py).
+    Strict Tri-Strategy Bifurcation — zero overlap, distinct risk/reward per portfolio.
 
-    COURT TERME (+15% to +40%):
-        Pool: high momentum + short squeeze candidates
-        Sort: Bullish_Divergence → Ultimate_Conviction_Score → Quant_Risk_Score
-        Extra filter: Momentum_1Y > 15% preferred
+    COURT TERME (1-30 days | Catalyst):
+        Source: _pool=="court" (high Beta/VaR/Momentum candidates)
+        Required: High Beta + High VaR (embrace volatility)
+        Sort: CT_Score → Narrative_Score → Bullish_Divergence
 
-    MOYEN TERME (+30% to +80%):
-        Pool: Hurst > 0.55 + RS_vs_SPY > 0 (outperforming market)
-        Sort: Quant_Risk_Score → RS_vs_SPY
-        Extra filter: Price > VWAP + Price > SMA_200
+    MOYEN TERME (1-8 months | Momentum):
+        Source: _pool=="moyen" (quant_risk full universe)
+        Required: Hurst_Exponent > 0.5 AND Last_Price > SMA_200
+        Sort: Hurst_Exponent → RS_vs_SPY → Quant_Risk_Score
 
-    LONG TERME (+30% to +150%):
-        Pool: Margin_of_Safety > 0 + Deep_Value_Score > 50
-        Sort: Deep_Value_Score → Margin_of_Safety → Fundamental_Score
+    LONG TERME (1+ years | Deep Value):
+        Source: _pool=="long" (deep_valuation full universe)
+        Required: Margin_of_Safety > 0 (strictly undervalued)
+        Sort: Margin_of_Safety → Deep_Value_Score → Fundamental_Score
     """
     available = [c for c in _OUTPUT_COLS if c in df.columns]
 
-    # ── COURT TERME: momentum + catalyst candidates ────────────────────────────
+    # ── COURT TERME: High Beta + High VaR + Momentum ──────────────────────────
     ct_cands = _pool_candidates(df, "court", exclude_tickers=[])
-    if "Momentum_1Y" in ct_cands.columns:
-        strong = ct_cands[ct_cands["Momentum_1Y"] > 15]
-        if len(strong) >= 5:
-            ct_cands = strong
     if "Bullish_Divergence" in ct_cands.columns:
         ct_cands = ct_cands.copy()
         ct_cands["_bd_int"] = ct_cands["Bullish_Divergence"].fillna(0).astype(int)
-    narr_std = ct_cands["Narrative_Score"].std() if "Narrative_Score" in ct_cands.columns else 0
+    # Build CT sort: CT_Score primary, then narrative, then divergence
     ct_sort = []
-    if "_bd_int" in ct_cands.columns:
-        ct_sort.append("_bd_int")
     if "CT_Score" in ct_cands.columns:
         ct_sort.append("CT_Score")
-    elif narr_std > 2 and "Narrative_Score" in ct_cands.columns:
+    if "Narrative_Score" in ct_cands.columns:
         ct_sort.append("Narrative_Score")
-    elif "Ultimate_Conviction_Score" in ct_cands.columns:
-        ct_sort.append("Ultimate_Conviction_Score")
-    if "Quant_Risk_Score" in ct_cands.columns:
-        ct_sort.append("Quant_Risk_Score")
+    if "_bd_int" in ct_cands.columns:
+        ct_sort.append("_bd_int")
+    if not ct_sort:
+        ct_sort = ["Quant_Risk_Score"] if "Quant_Risk_Score" in ct_cands.columns else ["ticker"]
     short_term = (
         ct_cands.sort_values(ct_sort, ascending=[False] * len(ct_sort))
         .head(5)[available].reset_index(drop=True)
     )
     ct_tickers = short_term["ticker"].tolist()
 
-    # ── MOYEN TERME: trending + outperforming market ───────────────────────────
+    # ── MOYEN TERME: Hurst>0.5 + Price>SMA_200 (trend-following) ─────────────
     mt_cands = _pool_candidates(df, "moyen", exclude_tickers=ct_tickers)
-    # Apply filters progressively — relax if not enough candidates
-    for hurst_thresh, require_rs, require_vwap in [
-        (0.55, True,  True),   # strict
-        (0.50, True,  False),  # relax VWAP
-        (0.50, False, False),  # relax RS too
-        (0.00, False, False),  # no filter — fallback
+    # Progressive filter: strict → relax
+    filtered_mt = pd.DataFrame()
+    for hurst_min, require_sma200, require_rs in [
+        (0.55, True,  True),
+        (0.50, True,  False),
+        (0.50, False, False),
+        (0.0,  False, False),
     ]:
-        mt_mask = pd.Series([True] * len(mt_cands), index=mt_cands.index)
-        if "Hurst_Exponent" in mt_cands.columns and hurst_thresh > 0:
-            mt_mask &= mt_cands["Hurst_Exponent"] > hurst_thresh
-        if require_rs and "RS_vs_SPY" in mt_cands.columns:
-            mt_mask &= mt_cands["RS_vs_SPY"] > 0
-        if require_vwap and "Price_vs_VWAP" in mt_cands.columns:
-            mt_mask &= mt_cands["Price_vs_VWAP"] > 0
-        if "SMA_200" in mt_cands.columns:
-            price_col = "Last_Price" if "Last_Price" in mt_cands.columns else ("Current_Price" if "Current_Price" in mt_cands.columns else None)
+        mask = pd.Series(True, index=mt_cands.index)
+        if "Hurst_Exponent" in mt_cands.columns and hurst_min > 0:
+            mask &= mt_cands["Hurst_Exponent"] > hurst_min
+        if require_sma200 and "SMA_200" in mt_cands.columns:
+            price_col = next((c for c in ["Last_Price", "Current_Price"] if c in mt_cands.columns), None)
             if price_col:
-                mt_mask &= mt_cands[price_col].fillna(0) > mt_cands["SMA_200"].fillna(0)
-        filtered_mt = mt_cands[mt_mask]
+                mask &= mt_cands[price_col].fillna(0) > mt_cands["SMA_200"].fillna(0)
+        if require_rs and "RS_vs_SPY" in mt_cands.columns:
+            mask &= mt_cands["RS_vs_SPY"] > 0
+        filtered_mt = mt_cands[mask]
         if len(filtered_mt) >= 5:
             break
     if filtered_mt.empty:
         filtered_mt = mt_cands
-    mt_sort = [c for c in ["Quant_Risk_Score", "RS_vs_SPY", "Hurst_Exponent"] if c in filtered_mt.columns]
+    mt_sort = [c for c in ["Hurst_Exponent", "RS_vs_SPY", "Quant_Risk_Score"] if c in filtered_mt.columns]
     medium_term = (
         filtered_mt.sort_values(mt_sort, ascending=[False] * len(mt_sort))
         .head(5)[available].reset_index(drop=True)
     )
     mt_tickers = medium_term["ticker"].tolist()
 
-    # ── LONG TERME: undervalued + strong fundamentals ─────────────────────────
+    # ── LONG TERME: Margin_of_Safety > 0 (absolute safety, lowest VaR) ────────
     lt_cands = _pool_candidates(df, "long", exclude_tickers=ct_tickers + mt_tickers)
-    # Progressive filter: strict → relax Fundamental_Score → relax MoS
-    for mos_min, dv_min, fund_min in [
-        (0.10, 50, 50),   # strict: MoS>10%, DV>50, Fund>50
-        (0.0,  50, 40),   # relax Fund threshold
-        (0.0,  40, 0),    # relax DV threshold
-        (None, 0,  0),    # no filter
-    ]:
-        lt_mask = pd.Series([True] * len(lt_cands), index=lt_cands.index)
+    # Progressive filter: strict MoS → relax
+    filtered_lt = pd.DataFrame()
+    for mos_min, dv_min in [(0.10, 55), (0.0, 50), (0.0, 40), (None, 0)]:
+        mask = pd.Series(True, index=lt_cands.index)
         if mos_min is not None and "Margin_of_Safety" in lt_cands.columns:
-            lt_mask &= lt_cands["Margin_of_Safety"] > mos_min
+            mask &= lt_cands["Margin_of_Safety"] > mos_min
         if dv_min > 0 and "Deep_Value_Score" in lt_cands.columns:
-            lt_mask &= lt_cands["Deep_Value_Score"] > dv_min
-        if fund_min > 0 and "Fundamental_Score" in lt_cands.columns:
-            lt_mask &= lt_cands["Fundamental_Score"] > fund_min
-        filtered_lt = lt_cands[lt_mask]
+            mask &= lt_cands["Deep_Value_Score"] > dv_min
+        filtered_lt = lt_cands[mask]
         if len(filtered_lt) >= 5:
             break
     if filtered_lt.empty:
         filtered_lt = lt_cands
-    lt_sort = [c for c in ["Deep_Value_Score", "Margin_of_Safety", "Fundamental_Score", "Ultimate_Conviction_Score"] if c in filtered_lt.columns]
+    lt_sort = [c for c in ["Margin_of_Safety", "Deep_Value_Score", "Fundamental_Score"] if c in filtered_lt.columns]
     long_term = (
         filtered_lt.sort_values(lt_sort, ascending=[False] * len(lt_sort))
         .head(5)[available].reset_index(drop=True)

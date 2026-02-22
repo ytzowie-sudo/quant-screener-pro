@@ -229,19 +229,37 @@ def _safe(row: pd.Series, col: str, default=None):
     return default
 
 
-def _target_price(row: pd.Series) -> str:
+def _target_price(row: pd.Series, portfolio_type: str = "court") -> str:
+    """
+    Per-strategy target price:
+      court (CT): Last_Price * 1.75  → targeting +75% explosive upside
+      moyen (MT): Last_Price * 1.65  → targeting +65% momentum swing
+      long  (LT): Last_Price / (1 - Margin_of_Safety) → true intrinsic value
+                  fallback: Last_Price * 1.15 if MoS <= 0 or NaN
+    """
     price = _safe(row, "Last_Price")
     if price is None:
         price = _safe(row, "Current_Price")
     if price is None:
         price = _safe(row, "VWAP")
-    mos = _safe(row, "Margin_of_Safety")
-    if price is not None:
-        if mos is not None and 0 < mos < 1:
-            target = price / (1 - mos)
-            return f"${target:,.2f}"
+    if price is None:
+        return "N/A"
+    price = float(price)
+    if portfolio_type == "long":
+        mos = _safe(row, "Margin_of_Safety")
+        if mos is not None:
+            try:
+                mos = float(mos)
+                if 0 < mos < 1:
+                    target = price / (1 - mos)
+                    return f"${target:,.2f} (+{(target/price-1)*100:.0f}%)"
+            except (TypeError, ValueError):
+                pass
         return f"${price * 1.15:,.2f} (+15%)"
-    return "N/A"
+    elif portfolio_type == "moyen":
+        return f"${price * 1.65:,.2f} (+65%)"
+    else:  # court
+        return f"${price * 1.75:,.2f} (+75%)"
 
 
 def _entry_zone(row: pd.Series) -> str:
@@ -316,7 +334,7 @@ def _company_name(ticker: str) -> str:
         return ticker
 
 
-def _render_stock_card(row: pd.Series) -> None:
+def _render_stock_card(row: pd.Series, portfolio_type: str = "court") -> None:
     ticker    = _safe(row, "ticker", "—")
     ucs       = _safe(row, "Ultimate_Conviction_Score")
     ucs_str   = f"{ucs:.1f}" if ucs is not None else "—"
@@ -330,7 +348,7 @@ def _render_stock_card(row: pd.Series) -> None:
     var_str, var_css   = _var_display(row)
     mos_str, mos_css   = _mos_display(row)
     entry_str          = _entry_zone(row)
-    target_str         = _target_price(row)
+    target_str         = _target_price(row, portfolio_type)
 
     dv_str   = f"{dv_score:.1f}"  if dv_score is not None else "N/A"
     qr_str   = f"{qr_score:.1f}" if qr_score is not None else "N/A"
@@ -734,6 +752,12 @@ if _sectors:
 
 tabs = st.tabs(list(_SHEET_MAP.keys()))
 
+_TAB_PORTFOLIO_TYPE = {
+    "Court Terme (Catalysts)": "court",
+    "Moyen Terme (Momentum)":  "moyen",
+    "Long Terme (Value)":      "long",
+}
+
 for tab_obj, (tab_label, _) in zip(tabs, _SHEET_MAP.items()):
     with tab_obj:
         df = portfolios[tab_label]
@@ -742,6 +766,7 @@ for tab_obj, (tab_label, _) in zip(tabs, _SHEET_MAP.items()):
                         unsafe_allow_html=True)
             continue
 
+        ptype = _TAB_PORTFOLIO_TYPE.get(tab_label, "court")
         for _, row in df.iterrows():
-            _render_stock_card(row)
+            _render_stock_card(row, portfolio_type=ptype)
             st.markdown("<hr>", unsafe_allow_html=True)

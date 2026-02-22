@@ -78,33 +78,59 @@ def _extract_json(text: str) -> dict:
 
 def _momentum_candidates(n: int = _TOP_N) -> list[str]:
     """
-    Selects top N tickers by short-term momentum signal from fundamentals.csv:
-    - High Relative Volume (unusual activity today)
-    - High Short Interest (short squeeze potential)
-    - Earnings within 7 days (imminent catalyst)
-    Falls back to top N by Momentum_1Y if columns are missing.
+    Selects top N SHORT-TERM candidates from quant_risk.csv enriched with fundamentals.
+    CT profile: high Beta (volatility amplifier), high VaR_95 (we embrace it here),
+    high Short_Interest (squeeze potential), strong Momentum_1Y.
+    Score = Momentum*35 + Beta*25 + VaR*20 + ShortInterest*20
     """
     try:
-        df = pd.read_csv("fundamentals.csv")
+        df = pd.read_csv("quant_risk.csv")
     except FileNotFoundError:
         try:
-            df = pd.read_csv("data_loaded.csv")
+            df = pd.read_csv("fundamentals.csv")
         except FileNotFoundError:
             return []
 
     if df.empty:
         return []
 
+    # Enrich with fundamentals for Short_Interest_Pct and Momentum_1Y
+    try:
+        fund = pd.read_csv("fundamentals.csv")
+        fund_add = [c for c in ["Short_Interest_Pct", "Momentum_1Y", "Ann_Volatility"]
+                    if c in fund.columns and c not in df.columns]
+        if fund_add:
+            df = df.merge(fund[["ticker"] + fund_add], on="ticker", how="left")
+    except Exception:
+        pass
+
+    # Clean _x/_y suffixes from quant merge
+    for col in list(df.columns):
+        if col.endswith("_x"):
+            base = col[:-2]
+            y = base + "_y"
+            if y in df.columns:
+                df[base] = df[y].combine_first(df[col])
+                df.drop(columns=[col, y], inplace=True)
+            else:
+                df.rename(columns={col: base}, inplace=True)
+        elif col.endswith("_y") and col[:-2] not in df.columns:
+            df.rename(columns={col: col[:-2]}, inplace=True)
+
     score = pd.Series(0.0, index=df.index)
 
-    if "Short_Interest_Pct" in df.columns:
-        score += df["Short_Interest_Pct"].rank(pct=True, na_option="bottom") * 30
-
     if "Momentum_1Y" in df.columns:
-        score += df["Momentum_1Y"].rank(pct=True, na_option="bottom") * 40
+        score += df["Momentum_1Y"].rank(pct=True, na_option="bottom") * 35
 
-    if "Earnings_Growth" in df.columns:
-        score += df["Earnings_Growth"].rank(pct=True, na_option="bottom") * 30
+    if "Beta" in df.columns:
+        score += df["Beta"].rank(pct=True, na_option="bottom") * 25
+
+    if "VaR_95" in df.columns:
+        # High VaR = high volatility = CT opportunity (rank ascending so highest VaR = highest rank)
+        score += df["VaR_95"].rank(pct=True, ascending=True, na_option="bottom") * 20
+
+    if "Short_Interest_Pct" in df.columns:
+        score += df["Short_Interest_Pct"].rank(pct=True, na_option="bottom") * 20
 
     df["_event_score"] = score
     top = df.nlargest(n, "_event_score")["ticker"].tolist()

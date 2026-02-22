@@ -131,6 +131,20 @@ def get_global_universe() -> pd.DataFrame:
         col = next(c for c in ["Ticker", "Symbol"] if c in stoxx_df.columns)
         for ticker in _clean_tickers(stoxx_df[col].tolist()):
             records.append({"ticker": ticker, "index": "EuroStoxx50"})
+    time.sleep(0.5)
+
+    try:
+        sp600_tables = _read_wiki("https://en.wikipedia.org/wiki/List_of_S%26P_600_companies")
+        sp600_df = next(
+            (t for t in sp600_tables if any(c in t.columns for c in ["Ticker symbol", "Symbol", "Ticker"])),
+            None,
+        )
+        if sp600_df is not None:
+            col = next(c for c in ["Ticker symbol", "Symbol", "Ticker"] if c in sp600_df.columns)
+            for ticker in _clean_tickers(sp600_df[col].tolist()):
+                records.append({"ticker": ticker, "index": "SP600"})
+    except Exception as e:
+        print(f"  [WARNING] S&P 600 scrape failed: {e}")
 
     df = pd.DataFrame(records)
     df.drop_duplicates(subset="ticker", keep="first", inplace=True)

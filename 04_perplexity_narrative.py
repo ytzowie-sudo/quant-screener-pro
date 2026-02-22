@@ -181,55 +181,108 @@ def run_narrative_analysis() -> pd.DataFrame:
     except FileNotFoundError:
         pass
 
-    # ── COURT TERME pool: explosive short-term candidates ────────────────────
-    # Pull from full fundamentals universe (not just top-100 quant)
-    # CT_Score = Beta*30 + Momentum_1Y*40 + Short_Interest*30
-    # Targets: high-beta mid/small caps with strong momentum + squeeze potential
+    # ══════════════════════════════════════════════════════════════════════════
+    # STRICT TRI-STRATEGY SEGREGATION — No blending, no cannibalization
+    # Each pool draws from its own source with its own risk/reward criteria.
+    # Exactly top 5 per strategy → 15 tickers sent to Perplexity.
+    # ══════════════════════════════════════════════════════════════════════════
+
+    # ── COURT TERME pool (top 5): High Beta + High VaR + High Momentum ───────
+    # Source: quant_risk.csv (full universe, has Beta + VaR_95)
+    # Embrace volatility — CT wants explosive small/mid caps
     try:
-        ct_source = pd.read_csv("fundamentals.csv")
-        # Enrich with quant data (Hurst, Bullish_Divergence, Quant_Risk_Score)
+        ct_source = pd.read_csv("quant_risk.csv")
+        # Enrich with fundamentals for Short_Interest_Pct and Momentum_1Y
         try:
-            qt = pd.read_csv("quant_risk.csv")
-            qt_add = [c for c in qt.columns if c not in ct_source.columns and c != "ticker"]
-            ct_source = ct_source.merge(qt[["ticker"] + qt_add], on="ticker", how="left")
+            fund_ct = pd.read_csv("fundamentals.csv")
+            ct_add = [c for c in ["Short_Interest_Pct", "Momentum_1Y"]
+                      if c in fund_ct.columns and c not in ct_source.columns]
+            if ct_add:
+                ct_source = ct_source.merge(fund_ct[["ticker"] + ct_add], on="ticker", how="left")
         except Exception:
             pass
+        # Clean _x/_y
+        for col in list(ct_source.columns):
+            if col.endswith("_x"):
+                base = col[:-2]
+                y = base + "_y"
+                if y in ct_source.columns:
+                    ct_source[base] = ct_source[y].combine_first(ct_source[col])
+                    ct_source.drop(columns=[col, y], inplace=True)
+                else:
+                    ct_source.rename(columns={col: base}, inplace=True)
+            elif col.endswith("_y") and col[:-2] not in ct_source.columns:
+                ct_source.rename(columns={col: col[:-2]}, inplace=True)
         ct_df = ct_source.copy()
     except FileNotFoundError:
         ct_df = df.copy()
 
-    # Compute CT_Score: reward high momentum, high beta, high short interest
-    ct_df = ct_df.copy()
-    mom  = ct_df["Momentum_1Y"].fillna(0).clip(0, 300)
-    beta = ct_df["Beta"].fillna(1).clip(0, 4) if "Beta" in ct_df.columns else 1
-    si   = ct_df["Short_Interest_Pct"].fillna(0).clip(0, 0.5) if "Short_Interest_Pct" in ct_df.columns else 0
+    # CT_Score: Momentum*35 + Beta*25 + VaR*20 + ShortInterest*20
+    mom  = ct_df["Momentum_1Y"].fillna(0).clip(0, 300) if "Momentum_1Y" in ct_df.columns else pd.Series(0, index=ct_df.index)
+    beta = ct_df["Beta"].fillna(1).clip(0, 4)          if "Beta"         in ct_df.columns else pd.Series(1, index=ct_df.index)
+    var  = ct_df["VaR_95"].fillna(0).abs()             if "VaR_95"       in ct_df.columns else pd.Series(0, index=ct_df.index)
+    si   = ct_df["Short_Interest_Pct"].fillna(0).clip(0, 0.5) if "Short_Interest_Pct" in ct_df.columns else pd.Series(0, index=ct_df.index)
     ct_df["CT_Score"] = (
-        (mom  / mom.max())  * 40
-        + (beta / 4)        * 30
-        + (si   / 0.5)      * 30
+        (mom / mom.max().clip(1))   * 35
+        + (beta / 4)                * 25
+        + (var / var.max().clip(1)) * 20
+        + (si / 0.5)                * 20
     )
-    # Minimum quality gate: Quant_Risk_Score > 30 if available
-    if "Quant_Risk_Score" in ct_df.columns:
-        ct_df = ct_df[ct_df["Quant_Risk_Score"].fillna(0) > 30]
-    ct_pool = ct_df.nlargest(10, "CT_Score").copy()
+    ct_pool = ct_df.nlargest(5, "CT_Score").copy()
     ct_pool["_pool"] = "court"
-    print(f"  CT pool top 5: {ct_pool['ticker'].head(5).tolist()} (CT_Score range {ct_pool['CT_Score'].min():.1f}-{ct_pool['CT_Score'].max():.1f})")
+    print(f"  CT pool (top 5): {ct_pool['ticker'].tolist()}")
 
-    # ── MOYEN TERME pool: trending + outperforming market ─────────────────────
-    mt_df = df.copy()
-    if "Hurst_Exponent" in mt_df.columns:
-        mt_df = mt_df[mt_df["Hurst_Exponent"] > 0.55]
-    if "RS_vs_SPY" in mt_df.columns:
-        mt_df = mt_df[mt_df["RS_vs_SPY"] > 0]
-    if mt_df.empty:
+    # ── MOYEN TERME pool (top 5): Hurst>0.5 + Price>SMA_200 + RS>0 ──────────
+    # Source: quant_risk.csv (full universe, has Hurst + SMA_200)
+    try:
+        mt_source = pd.read_csv("quant_risk.csv")
+        # Clean _x/_y
+        for col in list(mt_source.columns):
+            if col.endswith("_x"):
+                base = col[:-2]
+                y = base + "_y"
+                if y in mt_source.columns:
+                    mt_source[base] = mt_source[y].combine_first(mt_source[col])
+                    mt_source.drop(columns=[col, y], inplace=True)
+                else:
+                    mt_source.rename(columns={col: base}, inplace=True)
+            elif col.endswith("_y") and col[:-2] not in mt_source.columns:
+                mt_source.rename(columns={col: col[:-2]}, inplace=True)
+        mt_df = mt_source.copy()
+    except FileNotFoundError:
         mt_df = df.copy()
-    mt_pool = mt_df.nlargest(10, "Quant_Risk_Score").copy()
-    mt_pool["_pool"] = "moyen"
 
-    # ── LONG TERME pool: load from deep_valuation.csv (590 stocks) ───────────
+    # Strict MT filters — relax progressively if not enough candidates
+    mt_filtered = pd.DataFrame()
+    for hurst_min, require_sma200, require_rs in [
+        (0.55, True,  True),
+        (0.50, True,  False),
+        (0.50, False, False),
+        (0.0,  False, False),
+    ]:
+        mask = pd.Series(True, index=mt_df.index)
+        if "Hurst_Exponent" in mt_df.columns and hurst_min > 0:
+            mask &= mt_df["Hurst_Exponent"] > hurst_min
+        if require_sma200 and "SMA_200" in mt_df.columns and "Last_Price" in mt_df.columns:
+            mask &= mt_df["Last_Price"].fillna(0) > mt_df["SMA_200"].fillna(0)
+        if require_rs and "RS_vs_SPY" in mt_df.columns:
+            mask &= mt_df["RS_vs_SPY"] > 0
+        # Exclude CT tickers
+        mask &= ~mt_df["ticker"].isin(ct_pool["ticker"].tolist())
+        mt_filtered = mt_df[mask]
+        if len(mt_filtered) >= 5:
+            break
+    if mt_filtered.empty:
+        mt_filtered = mt_df[~mt_df["ticker"].isin(ct_pool["ticker"].tolist())]
+    mt_sort = [c for c in ["Hurst_Exponent", "RS_vs_SPY", "Quant_Risk_Score"] if c in mt_filtered.columns]
+    mt_pool = mt_filtered.nlargest(5, mt_sort[0] if mt_sort else "Quant_Risk_Score").copy()
+    mt_pool["_pool"] = "moyen"
+    print(f"  MT pool (top 5): {mt_pool['ticker'].tolist()}")
+
+    # ── LONG TERME pool (top 5): MoS>0 + Deep_Value_Score>50 ────────────────
+    # Source: deep_valuation.csv (full universe, has Margin_of_Safety)
     try:
         lt_source = pd.read_csv("deep_valuation.csv")
-        # Enrich with fundamentals if available
         if "Fundamental_Score" not in lt_source.columns:
             try:
                 fund_lt = pd.read_csv("fundamentals.csv")[["ticker", "Fundamental_Score"]]
@@ -237,22 +290,33 @@ def run_narrative_analysis() -> pd.DataFrame:
             except Exception:
                 pass
         lt_df = lt_source.copy()
-        if "Margin_of_Safety" in lt_df.columns:
-            lt_df = lt_df[lt_df["Margin_of_Safety"] > 0]
-        if "Deep_Value_Score" in lt_df.columns:
-            lt_df = lt_df[lt_df["Deep_Value_Score"] > 50]
-        if lt_df.empty:
-            lt_df = lt_source.copy()
     except FileNotFoundError:
         lt_df = df.copy()
-    lt_pool = lt_df.nlargest(10, "Deep_Value_Score" if "Deep_Value_Score" in lt_df.columns else "Quant_Risk_Score").copy()
-    lt_pool["_pool"] = "long"
 
-    # ── Combine all 3 pools, deduplicate, run Perplexity on all ───────────────
+    # Strict LT filters — relax progressively
+    lt_filtered = pd.DataFrame()
+    ct_mt_tickers = ct_pool["ticker"].tolist() + mt_pool["ticker"].tolist()
+    for mos_min, dv_min in [(0.10, 55), (0.0, 50), (0.0, 40), (None, 0)]:
+        mask = ~lt_df["ticker"].isin(ct_mt_tickers)
+        if mos_min is not None and "Margin_of_Safety" in lt_df.columns:
+            mask &= lt_df["Margin_of_Safety"] > mos_min
+        if dv_min > 0 and "Deep_Value_Score" in lt_df.columns:
+            mask &= lt_df["Deep_Value_Score"] > dv_min
+        lt_filtered = lt_df[mask]
+        if len(lt_filtered) >= 5:
+            break
+    if lt_filtered.empty:
+        lt_filtered = lt_df[~lt_df["ticker"].isin(ct_mt_tickers)]
+    lt_sort = "Deep_Value_Score" if "Deep_Value_Score" in lt_filtered.columns else "Margin_of_Safety"
+    lt_pool = lt_filtered.nlargest(5, lt_sort).copy()
+    lt_pool["_pool"] = "long"
+    print(f"  LT pool (top 5): {lt_pool['ticker'].tolist()}")
+
+    # ── Combine exactly 15 tickers (5+5+5), deduplicate preserving pool tag ──
     combined = pd.concat([ct_pool, mt_pool, lt_pool], ignore_index=True)
     combined.drop_duplicates(subset="ticker", keep="first", inplace=True)
     combined.reset_index(drop=True, inplace=True)
-    print(f"  Pools: CT={len(ct_pool)} MT={len(mt_pool)} LT={len(lt_pool)} → {len(combined)} unique tickers for Perplexity")
+    print(f"  Sending {len(combined)} unique tickers to Perplexity (CT=5, MT=5, LT=5)")
 
     top15 = combined
 

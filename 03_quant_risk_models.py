@@ -361,16 +361,17 @@ def _score_universe(df: pd.DataFrame) -> pd.Series:
 
 def run_quant_models() -> pd.DataFrame:
     """
-    Loads top 100 stocks from technicals.csv, fetches macro trends, runs all
+    Loads the FULL technicals.csv universe, fetches macro trends, runs all
     quant models per ticker, scores, merges with technical data, and saves to
-    quant_risk.csv.
+    quant_risk.csv. No artificial cap — full funnel preserved.
     """
     technicals = pd.read_csv("technicals.csv")
     if technicals.empty:
         print("Error: technicals.csv is empty — run 03_technicals.py first.")
         return pd.DataFrame()
-    top100  = technicals.nlargest(_TOP_N, "Technical_Score").copy()
+    top100  = technicals.copy()
     tickers = top100["ticker"].tolist()
+    print(f"  Quant models: processing full universe of {len(tickers)} tickers (no cap)")
 
     macro = _get_macro_trends()
     print(f"  Oil trend: {macro['oil']} | Gold trend: {macro['gold']}")
@@ -399,6 +400,7 @@ def run_quant_models() -> pd.DataFrame:
     merged = top100.merge(risk_df[export_cols], on="ticker", how="left")
     merged.sort_values("Quant_Risk_Score", ascending=False, inplace=True)
     merged.reset_index(drop=True, inplace=True)
+    print(f"  quant_risk.csv: {len(merged)} tickers scored")
 
     merged.to_csv("quant_risk.csv", index=False)
     return merged
