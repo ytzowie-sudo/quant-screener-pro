@@ -84,6 +84,8 @@ def _score_universe(df: pd.DataFrame) -> pd.Series:
     Total: 100 pts
     """
     def pct(col: str, invert: bool = False) -> pd.Series:
+        if col not in df.columns:
+            return pd.Series(0.5, index=df.index)
         ranked = df[col].rank(pct=True, na_option="bottom")
         return (1 - ranked) if invert else ranked
 
