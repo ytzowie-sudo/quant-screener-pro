@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 import time
@@ -176,20 +177,27 @@ st.markdown("<hr>", unsafe_allow_html=True)
 
 # ── Data loading ──────────────────────────────────────────────────────────────
 
-@st.cache_data
 def load_data() -> dict[str, pd.DataFrame]:
     xl = pd.ExcelFile(_EXCEL_FILE)
     return {tab: pd.read_excel(xl, sheet) for tab, sheet in _SHEET_MAP.items()}
 
-try:
-    portfolios = load_data()
-except FileNotFoundError:
+if not os.path.exists(_EXCEL_FILE):
     st.markdown("""
     <div class="error-box">
         <b>⚠ No strategy file found.</b><br><br>
         <code>Hedge_Fund_Master_Strategy.xlsx</code> does not exist yet.<br>
-        Run the full pipeline first:<br><br>
-        <code>python run_fund.py</code>
+        Run the full pipeline first using the button above.
+    </div>
+    """, unsafe_allow_html=True)
+    st.stop()
+
+try:
+    portfolios = load_data()
+except Exception as _load_err:
+    st.markdown(f"""
+    <div class="error-box">
+        <b>⚠ Failed to load strategy file.</b><br><br>
+        {_load_err}
     </div>
     """, unsafe_allow_html=True)
     st.stop()
@@ -273,12 +281,13 @@ def _metric_html(label: str, value: str, css_class: str = "") -> str:
     </div>"""
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=3600)
 def _company_name(ticker: str) -> str:
     """Fetches the company long name from yfinance; falls back to ticker."""
     try:
-        info = yf.Ticker(ticker).info
-        return info.get("longName") or info.get("shortName") or ticker
+        info = yf.Ticker(ticker).fast_info
+        name = getattr(info, "display_name", None) or ticker
+        return name
     except Exception:
         return ticker
 
