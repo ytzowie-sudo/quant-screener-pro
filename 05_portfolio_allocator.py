@@ -191,25 +191,76 @@ def export_to_excel(portfolios: dict[str, pd.DataFrame], path: str = _OUTPUT_FIL
             portfolio_df.to_excel(writer, sheet_name=sheet_name, index=False)
 
 
+def _clean_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Resolves duplicate column suffixes (_x / _y) created by successive merges.
+    Keeps _y (the richer source) when both exist, then renames to base name.
+    Also ensures Last_Price is always present.
+    """
+    for col in list(df.columns):
+        if col.endswith("_x"):
+            base = col[:-2]
+            y_col = base + "_y"
+            if y_col in df.columns:
+                df[base] = df[y_col].combine_first(df[col])
+                df.drop(columns=[col, y_col], inplace=True)
+            else:
+                df.rename(columns={col: base}, inplace=True)
+        elif col.endswith("_y") and col[:-2] not in df.columns:
+            df.rename(columns={col: col[:-2]}, inplace=True)
+
+    if "Last_Price" not in df.columns:
+        for fallback in ["VWAP", "Last_Price_y", "Last_Price_x"]:
+            if fallback in df.columns:
+                df["Last_Price"] = df[fallback]
+                break
+
+    return df
+
+
 def run_portfolio_allocator() -> dict[str, pd.DataFrame]:
     """
     Reads ai_narrative.csv (quant track) and event_driven.csv (event track),
-    merges both, builds the 3 strategic portfolios, and exports to Excel.
-
-    Court Terme uses BOTH tracks merged — best Narrative_Score wins.
-    Long Terme and Moyen Terme remain purely quant-driven.
+    merges fundamentals + deep_valuation for complete data,
+    builds the 3 strategic portfolios, and exports to Excel.
     """
     df = pd.read_csv("ai_narrative.csv")
     if df.empty:
         print("Error: ai_narrative.csv is empty — run 04_perplexity_narrative.py first.")
         return {}
 
+    # ── Enrich with fundamentals (Last_Price, Margin_of_Safety, scores, etc.) ─
+    try:
+        fund_df = pd.read_csv("fundamentals.csv")
+        fund_cols = [c for c in fund_df.columns if c not in df.columns or c == "ticker"]
+        df = df.merge(fund_df[["ticker"] + [c for c in fund_cols if c != "ticker"]],
+                      on="ticker", how="left")
+    except FileNotFoundError:
+        print("  fundamentals.csv not found — skipping fundamental enrichment")
+
+    try:
+        dv_df = pd.read_csv("deep_valuation.csv")
+        dv_cols = [c for c in dv_df.columns if c not in df.columns or c == "ticker"]
+        df = df.merge(dv_df[["ticker"] + [c for c in dv_cols if c != "ticker"]],
+                      on="ticker", how="left")
+    except FileNotFoundError:
+        print("  deep_valuation.csv not found — skipping deep valuation enrichment")
+
+    df = _clean_columns(df)
+
+    # ── Fill NaN Catalysts/Threats/AI_Impact with placeholder ─────────────────
+    for col in ["Catalysts", "Threats", "AI_Impact"]:
+        if col in df.columns:
+            df[col] = df[col].fillna("Analyse en cours — relancer le pipeline pour les narratives.")
+
+    # ── Merge event-driven track ───────────────────────────────────────────────
     try:
         event_df = pd.read_csv("event_driven.csv")
         if not event_df.empty:
             combined = pd.concat([df, event_df], ignore_index=True, sort=False)
             combined.drop_duplicates(subset="ticker", keep="first", inplace=True)
             combined.reset_index(drop=True, inplace=True)
+            combined = _clean_columns(combined)
             print(f"  Merged quant track ({len(df)}) + event track ({len(event_df)}) → {len(combined)} unique stocks")
         else:
             combined = df

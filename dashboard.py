@@ -214,13 +214,17 @@ except Exception as _load_err:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _safe(row: pd.Series, col: str, default=None):
-    val = row.get(col, default)
-    try:
-        if pd.isna(val):
-            return default
-    except (TypeError, ValueError):
-        pass
-    return val
+    for attempt in [col, col + "_y", col + "_x"]:
+        val = row.get(attempt, None)
+        if val is None:
+            continue
+        try:
+            if pd.isna(val):
+                continue
+        except (TypeError, ValueError):
+            pass
+        return val
+    return default
 
 
 def _target_price(row: pd.Series) -> str:
@@ -282,11 +286,21 @@ def _mos_display(row: pd.Series) -> tuple[str, str]:
 
 
 def _metric_html(label: str, value: str, css_class: str = "") -> str:
-    return f"""
-    <div class="metric-box">
-        <div class="metric-label">{label}</div>
-        <div class="metric-value {css_class}">{value}</div>
-    </div>"""
+    _color_map = {
+        "positive": "#00C853",
+        "negative": "#FF1744",
+        "blue":     "#1E88E5",
+        "":         "#E8EAF0",
+    }
+    color = _color_map.get(css_class, "#E8EAF0")
+    return (
+        '<div style="background:#13151F; border:1px solid #1A2340; border-radius:3px;'
+        ' padding:0.6rem 0.9rem; text-align:center;">'
+        '<div style="font-size:0.65rem; color:#5C6A8A; letter-spacing:0.1em;'
+        ' text-transform:uppercase; margin-bottom:4px;">' + label + "</div>"
+        '<div style="font-size:1.05rem; font-weight:700; color:' + color + ';">' + value + "</div>"
+        "</div>"
+    )
 
 
 @st.cache_data(show_spinner=False, ttl=3600)
