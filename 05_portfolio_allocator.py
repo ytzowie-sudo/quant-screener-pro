@@ -139,7 +139,7 @@ def build_portfolios(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
             ct_cands = strong
     if "Bullish_Divergence" in ct_cands.columns:
         ct_cands = ct_cands.copy()
-        ct_cands["_bd_int"] = ct_cands["Bullish_Divergence"].astype(int)
+        ct_cands["_bd_int"] = ct_cands["Bullish_Divergence"].fillna(0).astype(int)
     narr_std = ct_cands["Narrative_Score"].std() if "Narrative_Score" in ct_cands.columns else 0
     ct_sort = []
     if "_bd_int" in ct_cands.columns:
