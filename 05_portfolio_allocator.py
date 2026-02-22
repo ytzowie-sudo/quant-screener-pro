@@ -100,92 +100,118 @@ _OUTPUT_COLS = [
 _OUTPUT_FILE = "Hedge_Fund_Master_Strategy.xlsx"
 
 
+def _pool_candidates(df: pd.DataFrame, pool_tag: str, exclude_tickers: list = None) -> pd.DataFrame:
+    """
+    Returns candidates for a pool filtered by _pool tag.
+    Excludes tickers already assigned to higher-priority portfolios.
+    """
+    pool_df = df[df["_pool"] == pool_tag].copy() if "_pool" in df.columns else df.copy()
+    if exclude_tickers:
+        pool_df = pool_df[~pool_df["ticker"].isin(exclude_tickers)]
+    return pool_df if not pool_df.empty else df[~df["ticker"].isin(exclude_tickers or [])].copy()
+
+
 def build_portfolios(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
     """
-    Splits the universe into 3 strategic portfolios with strict quant criteria:
+    Builds 3 portfolios from pre-filtered pools (set by 04_perplexity_narrative.py).
 
-    Long Term (Value):
-        Requires high Margin_of_Safety (> 0) AND high Deep_Value_Score.
-        Sorted by Deep_Value_Score desc, then Margin_of_Safety desc.
+    COURT TERME (+15% to +40%):
+        Pool: high momentum + short squeeze candidates
+        Sort: Bullish_Divergence → Ultimate_Conviction_Score → Quant_Risk_Score
+        Extra filter: Momentum_1Y > 15% preferred
 
-    Medium Term (Momentum):
-        Requires Hurst_Exponent > 0.5 (trending) AND Price_vs_VWAP > 0
-        (price above VWAP) AND Last_Price > SMA_200 (long-term uptrend).
-        Sorted by Quant_Risk_Score desc.
+    MOYEN TERME (+30% to +80%):
+        Pool: Hurst > 0.55 + RS_vs_SPY > 0 (outperforming market)
+        Sort: Quant_Risk_Score → RS_vs_SPY
+        Extra filter: Price > VWAP + Price > SMA_200
 
-    Short Term (Catalyst / Event-Driven):
-        Requires strong AI Catalysts (Narrative_Score > 60) AND
-        Bullish_Divergence = True preferred, else top Narrative_Score.
-        Sorted by Narrative_Score desc, Bullish_Divergence desc.
+    LONG TERME (+30% to +150%):
+        Pool: Margin_of_Safety > 0 + Deep_Value_Score > 50
+        Sort: Deep_Value_Score → Margin_of_Safety → Fundamental_Score
     """
     available = [c for c in _OUTPUT_COLS if c in df.columns]
 
-    # ── Long Term: genuine margin of safety + deep value ──────────────────────
-    lt_mask = pd.Series([True] * len(df), index=df.index)
-    if "Margin_of_Safety" in df.columns:
-        lt_mask &= df["Margin_of_Safety"] > 0
-    long_candidates = df[lt_mask].copy()
-    if long_candidates.empty:
-        long_candidates = df.copy()
-    lt_sort_cols = [c for c in ["Deep_Value_Score", "Margin_of_Safety", "Ultimate_Conviction_Score", "Quant_Risk_Score"] if c in long_candidates.columns]
-    long_term = (
-        long_candidates
-        .sort_values(lt_sort_cols, ascending=[False] * len(lt_sort_cols))
-        .head(5)[available]
-        .reset_index(drop=True)
-    )
-
-    # ── Medium Term: Hurst > 0.5, Price > VWAP, Price > SMA_200 ──────────────
-    mt_mask = pd.Series([True] * len(df), index=df.index)
-    if "Hurst_Exponent" in df.columns:
-        mt_mask &= df["Hurst_Exponent"] > 0.5
-    if "Price_vs_VWAP" in df.columns:
-        mt_mask &= df["Price_vs_VWAP"] > 0
-    if "SMA_200" in df.columns:
-        price_col = "Last_Price" if "Last_Price" in df.columns else ("Current_Price" if "Current_Price" in df.columns else None)
-        if price_col:
-            mt_mask &= df[price_col].fillna(0) > df["SMA_200"].fillna(0)
-    medium_candidates = df[mt_mask].copy()
-    if medium_candidates.empty:
-        medium_candidates = df.copy()
-    medium_term = (
-        medium_candidates
-        .sort_values("Quant_Risk_Score", ascending=False)
-        .head(5)[available]
-        .reset_index(drop=True)
-    )
-
-    # ── Short Term: strong narrative + bullish divergence ─────────────────────
-    # Use Narrative_Score filter only if scores are differentiated (std > 2)
-    st_mask = pd.Series([True] * len(df), index=df.index)
-    narr_std = df["Narrative_Score"].std() if "Narrative_Score" in df.columns else 0
-    if "Narrative_Score" in df.columns and narr_std > 2:
-        st_mask &= df["Narrative_Score"] > 60
-    short_candidates = df[st_mask].copy()
-    if short_candidates.empty:
-        short_candidates = df.copy()
-
-    # Sort: Bullish Divergence first, then best composite score
-    sort_cols = []
-    sort_asc  = []
-    if "Bullish_Divergence" in short_candidates.columns:
-        short_candidates["_bd_int"] = short_candidates["Bullish_Divergence"].astype(int)
-        sort_cols.append("_bd_int")
-        sort_asc.append(False)
-    # Primary sort: Narrative if differentiated, else Ultimate_Conviction_Score
-    if narr_std > 2 and "Narrative_Score" in short_candidates.columns:
-        sort_cols.append("Narrative_Score")
-    elif "Ultimate_Conviction_Score" in short_candidates.columns:
-        sort_cols.append("Ultimate_Conviction_Score")
-    elif "Quant_Risk_Score" in short_candidates.columns:
-        sort_cols.append("Quant_Risk_Score")
-    sort_asc.extend([False] * (len(sort_cols) - len(sort_asc)))
-
+    # ── COURT TERME: momentum + catalyst candidates ────────────────────────────
+    ct_cands = _pool_candidates(df, "court", exclude_tickers=[])
+    if "Momentum_1Y" in ct_cands.columns:
+        strong = ct_cands[ct_cands["Momentum_1Y"] > 15]
+        if len(strong) >= 5:
+            ct_cands = strong
+    if "Bullish_Divergence" in ct_cands.columns:
+        ct_cands = ct_cands.copy()
+        ct_cands["_bd_int"] = ct_cands["Bullish_Divergence"].astype(int)
+    narr_std = ct_cands["Narrative_Score"].std() if "Narrative_Score" in ct_cands.columns else 0
+    ct_sort = []
+    if "_bd_int" in ct_cands.columns:
+        ct_sort.append("_bd_int")
+    if narr_std > 2 and "Narrative_Score" in ct_cands.columns:
+        ct_sort.append("Narrative_Score")
+    elif "Ultimate_Conviction_Score" in ct_cands.columns:
+        ct_sort.append("Ultimate_Conviction_Score")
+    ct_sort.append("Quant_Risk_Score")
     short_term = (
-        short_candidates
-        .sort_values(sort_cols, ascending=sort_asc)
-        .head(5)[available]
-        .reset_index(drop=True)
+        ct_cands.sort_values(ct_sort, ascending=[False] * len(ct_sort))
+        .head(5)[available].reset_index(drop=True)
+    )
+    ct_tickers = short_term["ticker"].tolist()
+
+    # ── MOYEN TERME: trending + outperforming market ───────────────────────────
+    mt_cands = _pool_candidates(df, "moyen", exclude_tickers=ct_tickers)
+    # Apply filters progressively — relax if not enough candidates
+    for hurst_thresh, require_rs, require_vwap in [
+        (0.55, True,  True),   # strict
+        (0.50, True,  False),  # relax VWAP
+        (0.50, False, False),  # relax RS too
+        (0.00, False, False),  # no filter — fallback
+    ]:
+        mt_mask = pd.Series([True] * len(mt_cands), index=mt_cands.index)
+        if "Hurst_Exponent" in mt_cands.columns and hurst_thresh > 0:
+            mt_mask &= mt_cands["Hurst_Exponent"] > hurst_thresh
+        if require_rs and "RS_vs_SPY" in mt_cands.columns:
+            mt_mask &= mt_cands["RS_vs_SPY"] > 0
+        if require_vwap and "Price_vs_VWAP" in mt_cands.columns:
+            mt_mask &= mt_cands["Price_vs_VWAP"] > 0
+        if "SMA_200" in mt_cands.columns:
+            price_col = "Last_Price" if "Last_Price" in mt_cands.columns else ("Current_Price" if "Current_Price" in mt_cands.columns else None)
+            if price_col:
+                mt_mask &= mt_cands[price_col].fillna(0) > mt_cands["SMA_200"].fillna(0)
+        filtered_mt = mt_cands[mt_mask]
+        if len(filtered_mt) >= 5:
+            break
+    if filtered_mt.empty:
+        filtered_mt = mt_cands
+    mt_sort = [c for c in ["Quant_Risk_Score", "RS_vs_SPY", "Hurst_Exponent"] if c in filtered_mt.columns]
+    medium_term = (
+        filtered_mt.sort_values(mt_sort, ascending=[False] * len(mt_sort))
+        .head(5)[available].reset_index(drop=True)
+    )
+    mt_tickers = medium_term["ticker"].tolist()
+
+    # ── LONG TERME: undervalued + strong fundamentals ─────────────────────────
+    lt_cands = _pool_candidates(df, "long", exclude_tickers=ct_tickers + mt_tickers)
+    # Progressive filter: strict → relax Fundamental_Score → relax MoS
+    for mos_min, dv_min, fund_min in [
+        (0.10, 50, 50),   # strict: MoS>10%, DV>50, Fund>50
+        (0.0,  50, 40),   # relax Fund threshold
+        (0.0,  40, 0),    # relax DV threshold
+        (None, 0,  0),    # no filter
+    ]:
+        lt_mask = pd.Series([True] * len(lt_cands), index=lt_cands.index)
+        if mos_min is not None and "Margin_of_Safety" in lt_cands.columns:
+            lt_mask &= lt_cands["Margin_of_Safety"] > mos_min
+        if dv_min > 0 and "Deep_Value_Score" in lt_cands.columns:
+            lt_mask &= lt_cands["Deep_Value_Score"] > dv_min
+        if fund_min > 0 and "Fundamental_Score" in lt_cands.columns:
+            lt_mask &= lt_cands["Fundamental_Score"] > fund_min
+        filtered_lt = lt_cands[lt_mask]
+        if len(filtered_lt) >= 5:
+            break
+    if filtered_lt.empty:
+        filtered_lt = lt_cands
+    lt_sort = [c for c in ["Deep_Value_Score", "Margin_of_Safety", "Fundamental_Score", "Ultimate_Conviction_Score"] if c in filtered_lt.columns]
+    long_term = (
+        filtered_lt.sort_values(lt_sort, ascending=[False] * len(lt_sort))
+        .head(5)[available].reset_index(drop=True)
     )
 
     short_term  = _add_kelly(short_term,  "Court Terme")
@@ -235,14 +261,33 @@ def _clean_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 def run_portfolio_allocator() -> dict[str, pd.DataFrame]:
     """
-    Reads ai_narrative.csv (quant track) and event_driven.csv (event track),
-    merges fundamentals + deep_valuation for complete data,
-    builds the 3 strategic portfolios, and exports to Excel.
+    Builds 3 portfolios from distinct data sources:
+
+    COURT TERME  → ai_narrative.csv (top 30 Perplexity stocks, narrative quality)
+    MOYEN TERME  → quant_risk.csv   (top 100 quant stocks, momentum/trend quality)
+    LONG TERME   → deep_valuation.csv (all 590 stocks, value quality)
+
+    Each pool is enriched with fundamentals + deep_valuation before selection.
     """
+    # ── Load Perplexity track (Court Terme base) ───────────────────────────────
     df = pd.read_csv("ai_narrative.csv")
     if df.empty:
         print("Error: ai_narrative.csv is empty — run 04_perplexity_narrative.py first.")
         return {}
+
+    # ── Load wider quant pool for MT (100 stocks) ─────────────────────────────
+    try:
+        quant_df = pd.read_csv("quant_risk.csv")
+    except FileNotFoundError:
+        quant_df = df.copy()
+        print("  quant_risk.csv not found — using ai_narrative for MT pool")
+
+    # ── Load deep value pool for LT (all 590 stocks) ──────────────────────────
+    try:
+        dv_full = pd.read_csv("deep_valuation.csv")
+    except FileNotFoundError:
+        dv_full = df.copy()
+        print("  deep_valuation.csv not found — using ai_narrative for LT pool")
 
     # ── Enrich with fundamentals (Last_Price, Margin_of_Safety, scores, etc.) ─
     try:
@@ -268,20 +313,70 @@ def run_portfolio_allocator() -> dict[str, pd.DataFrame]:
         if col in df.columns:
             df[col] = df[col].fillna("Analyse en cours — relancer le pipeline pour les narratives.")
 
-    # ── Merge event-driven track ───────────────────────────────────────────────
+    # ── Tag CT pool on Perplexity df ───────────────────────────────────────────
+    if "_pool" not in df.columns:
+        df["_pool"] = "court"
+
+    # ── Build MT pool from quant_risk.csv (100 stocks) enriched ───────────────
+    try:
+        fund_df = pd.read_csv("fundamentals.csv")
+        qf_add = [c for c in fund_df.columns if c not in quant_df.columns and c != "ticker"]
+        quant_df = quant_df.merge(fund_df[["ticker"] + qf_add], on="ticker", how="left")
+    except Exception:
+        pass
+    try:
+        dv_df2 = pd.read_csv("deep_valuation.csv")
+        qd_add = [c for c in dv_df2.columns if c not in quant_df.columns and c != "ticker"]
+        quant_df = quant_df.merge(dv_df2[["ticker"] + qd_add], on="ticker", how="left")
+    except Exception:
+        pass
+    quant_df = _clean_columns(quant_df)
+    quant_df["_pool"] = "moyen"
+    # Carry over Perplexity narrative data for any overlapping tickers
+    narr_cols = [c for c in ["Catalysts", "Threats", "AI_Impact", "Narrative_Score",
+                              "Ultimate_Conviction_Score", "Finbert_Score"] if c in df.columns]
+    if narr_cols:
+        quant_df = quant_df.merge(df[["ticker"] + narr_cols], on="ticker", how="left")
+        quant_df = _clean_columns(quant_df)
+    for col in ["Catalysts", "Threats", "AI_Impact"]:
+        if col in quant_df.columns:
+            quant_df[col] = quant_df[col].fillna("Analyse en cours — relancer le pipeline pour les narratives.")
+
+    # ── Build LT pool from deep_valuation.csv (590 stocks) enriched ───────────
+    try:
+        fund_df2 = pd.read_csv("fundamentals.csv")
+        lf_add = [c for c in fund_df2.columns if c not in dv_full.columns and c != "ticker"]
+        dv_full_e = dv_full.merge(fund_df2[["ticker"] + lf_add], on="ticker", how="left")
+    except Exception:
+        dv_full_e = dv_full.copy()
+    dv_full_e = _clean_columns(dv_full_e)
+    dv_full_e["_pool"] = "long"
+    if narr_cols:
+        dv_full_e = dv_full_e.merge(df[["ticker"] + narr_cols], on="ticker", how="left")
+        dv_full_e = _clean_columns(dv_full_e)
+    for col in ["Catalysts", "Threats", "AI_Impact"]:
+        if col in dv_full_e.columns:
+            dv_full_e[col] = dv_full_e[col].fillna("Analyse en cours — relancer le pipeline pour les narratives.")
+
+    # ── Merge event-driven track into CT pool ─────────────────────────────────
     try:
         event_df = pd.read_csv("event_driven.csv")
         if not event_df.empty:
-            combined = pd.concat([df, event_df], ignore_index=True, sort=False)
-            combined.drop_duplicates(subset="ticker", keep="first", inplace=True)
-            combined.reset_index(drop=True, inplace=True)
-            combined = _clean_columns(combined)
-            print(f"  Merged quant track ({len(df)}) + event track ({len(event_df)}) → {len(combined)} unique stocks")
-        else:
-            combined = df
+            event_df["_pool"] = "court"
+            df = pd.concat([df, event_df], ignore_index=True, sort=False)
+            df.drop_duplicates(subset="ticker", keep="first", inplace=True)
+            df = _clean_columns(df)
+            print(f"  Event track merged into CT pool → {len(df)} CT candidates")
     except FileNotFoundError:
-        combined = df
-        print("  event_driven.csv not found — using quant track only for Court Terme")
+        print("  event_driven.csv not found — CT pool uses quant track only")
+
+    # ── Combine all 3 pools into one df with _pool tags ───────────────────────
+    combined = pd.concat([df, quant_df, dv_full_e], ignore_index=True, sort=False)
+    # Keep first occurrence per ticker per pool (CT > MT > LT priority for dedup within pool)
+    combined.drop_duplicates(subset=["ticker", "_pool"], keep="first", inplace=True)
+    combined.reset_index(drop=True, inplace=True)
+    combined = _clean_columns(combined)
+    print(f"  Combined pools: CT={len(df)} MT={len(quant_df)} LT={len(dv_full_e)} stocks")
 
     portfolios = build_portfolios(combined)
     export_to_excel(portfolios)

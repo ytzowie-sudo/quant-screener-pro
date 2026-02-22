@@ -14,7 +14,7 @@ except Exception:
     PERPLEXITY_API_KEY = os.environ.get("PERPLEXITY_API_KEY", "")
 _API_URL   = "https://api.perplexity.ai/chat/completions"
 _MODEL     = "sonar"
-_TOP_N     = 15
+_TOP_N     = 30   # Expanded to 30 to feed 3 distinct pools of 10 each
 _QUANT_W   = 0.70
 _NARR_W    = 0.30
 
@@ -145,16 +145,78 @@ def get_perplexity_narrative(ticker: str) -> dict:
 
 def run_narrative_analysis() -> pd.DataFrame:
     """
-    Loads the top 15 stocks by Quant_Risk_Score from quant_risk_analyzed.csv,
-    fetches a Perplexity narrative for each, computes the Ultimate_Conviction_Score,
-    and saves to narrative_analyzed.csv.
+    Loads top 30 stocks split into 3 dedicated pools:
+
+    COURT TERME pool (10 stocks) — calibrated for +15% to +40%:
+        High momentum (Momentum_1Y > median), high Short_Interest (squeeze potential),
+        Bullish_Divergence preferred, high Quant_Risk_Score.
+
+    MOYEN TERME pool (10 stocks) — calibrated for +30% to +80%:
+        Hurst > 0.55 (strong trend), Price > VWAP, RS_vs_SPY > 0 (outperforming market),
+        Momentum_1Y > 20%, sorted by Quant_Risk_Score.
+
+    LONG TERME pool (10 stocks) — calibrated for +30% to +150%:
+        Margin_of_Safety > 0 (undervalued), Deep_Value_Score > 50,
+        Fundamental_Score > 50, sorted by Deep_Value_Score.
+
+    Perplexity is called on all 30 (deduplicated). Ultimate_Conviction_Score
+    uses all 5 normalized scores.
     """
     df = pd.read_csv("sentiment.csv")
     if df.empty:
         print("Error: sentiment.csv is empty — run 04_sentiment_and_export.py first.")
         return pd.DataFrame()
-    top15 = df.nlargest(_TOP_N, "Quant_Risk_Score").copy()
-    top15.reset_index(drop=True, inplace=True)
+
+    # Enrich with fundamentals and deep valuation for pre-filtering
+    try:
+        fund_df = pd.read_csv("fundamentals.csv")
+        fund_add = [c for c in fund_df.columns if c not in df.columns and c != "ticker"]
+        df = df.merge(fund_df[["ticker"] + fund_add], on="ticker", how="left")
+    except FileNotFoundError:
+        pass
+    try:
+        dv_df = pd.read_csv("deep_valuation.csv")
+        dv_add = [c for c in dv_df.columns if c not in df.columns and c != "ticker"]
+        df = df.merge(dv_df[["ticker"] + dv_add], on="ticker", how="left")
+    except FileNotFoundError:
+        pass
+
+    # ── COURT TERME pool: momentum + short squeeze candidates ─────────────────
+    ct_df = df.copy()
+    if "Momentum_1Y" in ct_df.columns:
+        ct_df = ct_df[ct_df["Momentum_1Y"] >= ct_df["Momentum_1Y"].median()]
+    ct_pool = ct_df.nlargest(10, "Quant_Risk_Score").copy()
+    ct_pool["_pool"] = "court"
+
+    # ── MOYEN TERME pool: trending + outperforming market ─────────────────────
+    mt_df = df.copy()
+    if "Hurst_Exponent" in mt_df.columns:
+        mt_df = mt_df[mt_df["Hurst_Exponent"] > 0.55]
+    if "RS_vs_SPY" in mt_df.columns:
+        mt_df = mt_df[mt_df["RS_vs_SPY"] > 0]
+    if mt_df.empty:
+        mt_df = df.copy()
+    mt_pool = mt_df.nlargest(10, "Quant_Risk_Score").copy()
+    mt_pool["_pool"] = "moyen"
+
+    # ── LONG TERME pool: undervalued + strong fundamentals ────────────────────
+    lt_df = df.copy()
+    if "Margin_of_Safety" in lt_df.columns:
+        lt_df = lt_df[lt_df["Margin_of_Safety"] > 0]
+    if "Deep_Value_Score" in lt_df.columns:
+        lt_df = lt_df[lt_df["Deep_Value_Score"] > 50]
+    if lt_df.empty:
+        lt_df = df[df["Quant_Risk_Score"] >= df["Quant_Risk_Score"].median()].copy()
+    lt_pool = lt_df.nlargest(10, "Deep_Value_Score" if "Deep_Value_Score" in lt_df.columns else "Quant_Risk_Score").copy()
+    lt_pool["_pool"] = "long"
+
+    # ── Combine all 3 pools, deduplicate, run Perplexity on all ───────────────
+    combined = pd.concat([ct_pool, mt_pool, lt_pool], ignore_index=True)
+    combined.drop_duplicates(subset="ticker", keep="first", inplace=True)
+    combined.reset_index(drop=True, inplace=True)
+    print(f"  Pools: CT={len(ct_pool)} MT={len(mt_pool)} LT={len(lt_pool)} → {len(combined)} unique tickers for Perplexity")
+
+    top15 = combined
 
     narratives = []
     for ticker in tqdm(top15["ticker"].tolist(), desc="Perplexity Narrative"):
