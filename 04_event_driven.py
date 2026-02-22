@@ -7,11 +7,10 @@ import pandas as pd
 import yfinance as yf
 from tqdm import tqdm
 
-try:
-    import streamlit as st
-    PERPLEXITY_API_KEY = st.secrets.get("PERPLEXITY_API_KEY", "") or os.environ.get("PERPLEXITY_API_KEY", "")
-except Exception:
-    PERPLEXITY_API_KEY = os.environ.get("PERPLEXITY_API_KEY", "")
+from _secrets_helper import get_secret
+PERPLEXITY_API_KEY = get_secret("PERPLEXITY_API_KEY")
+if not PERPLEXITY_API_KEY:
+    print("  [WARNING] PERPLEXITY_API_KEY not set — event narratives will use defaults.")
 
 import requests
 

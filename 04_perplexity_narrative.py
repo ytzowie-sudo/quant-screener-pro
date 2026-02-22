@@ -7,11 +7,11 @@ import pandas as pd
 import requests
 from tqdm import tqdm
 
-try:
-    import streamlit as st
-    PERPLEXITY_API_KEY = st.secrets.get("PERPLEXITY_API_KEY", "") or os.environ.get("PERPLEXITY_API_KEY", "")
-except Exception:
-    PERPLEXITY_API_KEY = os.environ.get("PERPLEXITY_API_KEY", "")
+from _secrets_helper import get_secret
+PERPLEXITY_API_KEY = get_secret("PERPLEXITY_API_KEY")
+if not PERPLEXITY_API_KEY:
+    print("  [WARNING] PERPLEXITY_API_KEY not set — narratives will use defaults (score=50, N/A fields).")
+    print("  → Set it in .streamlit/secrets.toml: PERPLEXITY_API_KEY = \"pplx-xxxx\"")
 _API_URL   = "https://api.perplexity.ai/chat/completions"
 _MODEL     = "sonar"
 _TOP_N     = 30   # Expanded to 30 to feed 3 distinct pools of 10 each
@@ -199,14 +199,25 @@ def run_narrative_analysis() -> pd.DataFrame:
     mt_pool = mt_df.nlargest(10, "Quant_Risk_Score").copy()
     mt_pool["_pool"] = "moyen"
 
-    # ── LONG TERME pool: undervalued + strong fundamentals ────────────────────
-    lt_df = df.copy()
-    if "Margin_of_Safety" in lt_df.columns:
-        lt_df = lt_df[lt_df["Margin_of_Safety"] > 0]
-    if "Deep_Value_Score" in lt_df.columns:
-        lt_df = lt_df[lt_df["Deep_Value_Score"] > 50]
-    if lt_df.empty:
-        lt_df = df[df["Quant_Risk_Score"] >= df["Quant_Risk_Score"].median()].copy()
+    # ── LONG TERME pool: load from deep_valuation.csv (590 stocks) ───────────
+    try:
+        lt_source = pd.read_csv("deep_valuation.csv")
+        # Enrich with fundamentals if available
+        if "Fundamental_Score" not in lt_source.columns:
+            try:
+                fund_lt = pd.read_csv("fundamentals.csv")[["ticker", "Fundamental_Score"]]
+                lt_source = lt_source.merge(fund_lt, on="ticker", how="left")
+            except Exception:
+                pass
+        lt_df = lt_source.copy()
+        if "Margin_of_Safety" in lt_df.columns:
+            lt_df = lt_df[lt_df["Margin_of_Safety"] > 0]
+        if "Deep_Value_Score" in lt_df.columns:
+            lt_df = lt_df[lt_df["Deep_Value_Score"] > 50]
+        if lt_df.empty:
+            lt_df = lt_source.copy()
+    except FileNotFoundError:
+        lt_df = df.copy()
     lt_pool = lt_df.nlargest(10, "Deep_Value_Score" if "Deep_Value_Score" in lt_df.columns else "Quant_Risk_Score").copy()
     lt_pool["_pool"] = "long"
 
