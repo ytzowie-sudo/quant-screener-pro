@@ -37,3 +37,6 @@ technically_primed_stocks.csv
 # Local environment variables (never commit)
 .env
 .env.*
+
+# Streamlit secrets (never commit)
+.streamlit/secrets.toml

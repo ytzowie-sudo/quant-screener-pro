@@ -7,7 +7,11 @@ import pandas as pd
 import requests
 from tqdm import tqdm
 
-PERPLEXITY_API_KEY = os.environ.get("PERPLEXITY_API_KEY", "")
+try:
+    import streamlit as st
+    PERPLEXITY_API_KEY = st.secrets.get("PERPLEXITY_API_KEY", "") or os.environ.get("PERPLEXITY_API_KEY", "")
+except Exception:
+    PERPLEXITY_API_KEY = os.environ.get("PERPLEXITY_API_KEY", "")
 _API_URL   = "https://api.perplexity.ai/chat/completions"
 _MODEL     = "sonar"
 _TOP_N     = 15
