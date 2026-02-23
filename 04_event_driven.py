@@ -79,9 +79,9 @@ def _extract_json(text: str) -> dict:
 def _momentum_candidates(n: int = _TOP_N) -> list[str]:
     """
     Selects top N SHORT-TERM candidates from quant_risk.csv enriched with fundamentals.
-    CT profile: high Beta (volatility amplifier), high VaR_95 (we embrace it here),
-    high Short_Interest (squeeze potential), strong Momentum_1Y.
-    Score = Momentum*35 + Beta*25 + VaR*20 + ShortInterest*20
+    CT profile: high liquidity surges, strong 1-month momentum, squeeze potential,
+    high intraday volatility (ATR).
+    Score = Relative_Volume*30 + Momentum_1M*25 + Short_Interest*25 + ATR_14*20
     """
     try:
         df = pd.read_csv("quant_risk.csv")
@@ -94,10 +94,10 @@ def _momentum_candidates(n: int = _TOP_N) -> list[str]:
     if df.empty:
         return []
 
-    # Enrich with fundamentals for Short_Interest_Pct and Momentum_1Y
+    # Enrich with fundamentals for Short_Interest_Pct
     try:
         fund = pd.read_csv("fundamentals.csv")
-        fund_add = [c for c in ["Short_Interest_Pct", "Momentum_1Y", "Ann_Volatility"]
+        fund_add = [c for c in ["Short_Interest_Pct"]
                     if c in fund.columns and c not in df.columns]
         if fund_add:
             df = df.merge(fund[["ticker"] + fund_add], on="ticker", how="left")
@@ -117,22 +117,13 @@ def _momentum_candidates(n: int = _TOP_N) -> list[str]:
         elif col.endswith("_y") and col[:-2] not in df.columns:
             df.rename(columns={col: col[:-2]}, inplace=True)
 
-    score = pd.Series(0.0, index=df.index)
+    # CT_Score: Relative_Volume*30 + Momentum_1M*25 + Short_Interest*25 + ATR_14*20
+    rvol  = df["Relative_Volume"].rank(pct=True, na_option="bottom")       if "Relative_Volume"    in df.columns else pd.Series(0.5, index=df.index)
+    mom1m = df["Momentum_1M"].rank(pct=True, na_option="bottom")           if "Momentum_1M"        in df.columns else pd.Series(0.5, index=df.index)
+    si    = df["Short_Interest_Pct"].rank(pct=True, na_option="bottom")    if "Short_Interest_Pct" in df.columns else pd.Series(0.5, index=df.index)
+    atr   = df["ATR_14"].rank(pct=True, na_option="bottom")               if "ATR_14"             in df.columns else pd.Series(0.5, index=df.index)
 
-    if "Momentum_1Y" in df.columns:
-        score += df["Momentum_1Y"].rank(pct=True, na_option="bottom") * 35
-
-    if "Beta" in df.columns:
-        score += df["Beta"].rank(pct=True, na_option="bottom") * 25
-
-    if "VaR_95" in df.columns:
-        # High VaR = high volatility = CT opportunity (rank ascending so highest VaR = highest rank)
-        score += df["VaR_95"].rank(pct=True, ascending=True, na_option="bottom") * 20
-
-    if "Short_Interest_Pct" in df.columns:
-        score += df["Short_Interest_Pct"].rank(pct=True, na_option="bottom") * 20
-
-    df["_event_score"] = score
+    df["_event_score"] = rvol * 30 + mom1m * 25 + si * 25 + atr * 20
     top = df.nlargest(n, "_event_score")["ticker"].tolist()
     return top
 

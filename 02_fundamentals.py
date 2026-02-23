@@ -133,7 +133,7 @@ def _piotroski_f_score(info: dict) -> int:
     return score
 
 
-def _altman_z_score(info: dict) -> float:
+def _altman_z_score(ticker_obj, info: dict) -> float:
     """
     Altman Z-Score — bankruptcy risk predictor.
     Z > 2.99 = Safe zone
@@ -146,21 +146,38 @@ def _altman_z_score(info: dict) -> float:
         X3 = EBIT / Total Assets
         X4 = Market Cap / Total Liabilities
         X5 = Revenue / Total Assets
-    """
-    try:
-        total_assets       = info.get("totalAssets",          np.nan)
-        total_liabilities  = info.get("totalDebt",            np.nan)
-        current_assets     = info.get("totalCurrentAssets",   np.nan)
-        current_liabilities= info.get("totalCurrentLiabilities", np.nan)
-        retained_earnings  = info.get("retainedEarnings",     np.nan)
-        ebit               = info.get("ebit",                 np.nan)
-        market_cap         = info.get("marketCap",            np.nan)
-        revenue            = info.get("totalRevenue",         np.nan)
 
-        if any(v is None or (isinstance(v, float) and np.isnan(v))
-               for v in [total_assets, total_liabilities, current_assets,
-                         current_liabilities, retained_earnings, ebit,
-                         market_cap, revenue]):
+    Pulls balance-sheet and income-statement data from yfinance DataFrames
+    (not .info, which lacks most of these fields).
+    """
+    def _bs_val(bs, key):
+        if bs is None or bs.empty or key not in bs.index:
+            return np.nan
+        v = bs.loc[key].iloc[0]
+        return float(v) if v is not None and not (isinstance(v, float) and np.isnan(v)) else np.nan
+
+    def _fin_val(fin, key):
+        if fin is None or fin.empty or key not in fin.index:
+            return np.nan
+        v = fin.loc[key].iloc[0]
+        return float(v) if v is not None and not (isinstance(v, float) and np.isnan(v)) else np.nan
+
+    try:
+        bs  = ticker_obj.balance_sheet
+        fin = ticker_obj.financials
+
+        total_assets        = _bs_val(bs, "Total Assets")
+        current_assets      = _bs_val(bs, "Current Assets")
+        current_liabilities = _bs_val(bs, "Current Liabilities")
+        retained_earnings   = _bs_val(bs, "Retained Earnings")
+        total_liabilities   = _bs_val(bs, "Total Liabilities Net Minority Interest")
+        ebit                = _fin_val(fin, "EBIT")
+        market_cap          = info.get("marketCap", np.nan)
+        revenue             = info.get("totalRevenue", np.nan)
+
+        vals = [total_assets, current_assets, current_liabilities,
+                retained_earnings, total_liabilities, ebit, market_cap, revenue]
+        if any(v is None or (isinstance(v, float) and np.isnan(v)) for v in vals):
             return np.nan
         if total_assets == 0 or total_liabilities == 0:
             return np.nan
@@ -247,7 +264,7 @@ def evaluate_advanced_fundamentals() -> pd.DataFrame:
             row.update(_risk_metrics(hist))
             row.update(_valuation_metrics(info))
             row["Piotroski_F_Score"] = _piotroski_f_score(info)
-            row["Altman_Z_Score"]    = _altman_z_score(info)
+            row["Altman_Z_Score"]    = _altman_z_score(ticker_obj, info)
 
             if len(hist) >= 252:
                 price_now = float(hist["Close"].iloc[-1])
@@ -271,8 +288,12 @@ def evaluate_advanced_fundamentals() -> pd.DataFrame:
 
             try:
                 inst = ticker_obj.institutional_holders
-                if inst is not None and not inst.empty and "% Out" in inst.columns:
-                    row["Top10_Institutional_Pct"] = round(float(inst["% Out"].head(10).sum()), 4)
+                if inst is not None and not inst.empty:
+                    pct_col = next((c for c in ["pctHeld", "% Out"] if c in inst.columns), None)
+                    if pct_col:
+                        row["Top10_Institutional_Pct"] = round(float(inst[pct_col].head(10).sum()), 4)
+                    else:
+                        row["Top10_Institutional_Pct"] = np.nan
                 else:
                     row["Top10_Institutional_Pct"] = np.nan
             except Exception:

@@ -257,6 +257,7 @@ def _compute_metrics(ticker: str, macro: dict) -> dict:
         "Beta":               np.nan,
         "Stoch_K":            np.nan,
         "Stoch_D":            np.nan,
+        "Momentum_1M":        np.nan,
         "Bullish_Divergence": False,
         "Sector":             "Unknown",
         "Commodity_Adj":      0,
@@ -296,6 +297,12 @@ def _compute_metrics(ticker: str, macro: dict) -> dict:
 
         beta = _beta(daily_ret)
 
+        # 1-month momentum (last ~21 trading days)
+        if len(close) >= 22:
+            momentum_1m = round((last_price / float(close.iloc[-22]) - 1) * 100, 2)
+        else:
+            momentum_1m = np.nan
+
         return {
             "VWAP":               round(vwap,           4),
             "Last_Price":         round(last_price,      2),
@@ -304,6 +311,7 @@ def _compute_metrics(ticker: str, macro: dict) -> dict:
             "Ann_Volatility":     round(ann_vol,          4),
             "Hurst_Exponent":     hurst,
             "Beta":               beta,
+            "Momentum_1M":        momentum_1m,
             "Stoch_K":            round(float(stoch_k.iloc[-1]), 2) if not np.isnan(stoch_k.iloc[-1]) else np.nan,
             "Stoch_D":            round(float(stoch_d.iloc[-1]), 2) if not np.isnan(stoch_d.iloc[-1]) else np.nan,
             "Bullish_Divergence": divergence,
