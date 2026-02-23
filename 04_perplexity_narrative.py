@@ -296,15 +296,15 @@ def run_narrative_analysis() -> pd.DataFrame:
     mt_pool["_pool"] = "moyen"
     print(f"  MT pool (top 5): {mt_pool['ticker'].tolist()}")
 
-    # ── LONG TERME pool (top 5): Fortress Value — MoS + Piotroski + Altman ──
-    # Source: deep_valuation.csv enriched with fundamentals (Piotroski, Altman_Z)
-    # HARD GATES: Piotroski_F_Score >= 7 AND Altman_Z_Score >= 2.99 (Safe Zone)
+    # ── LONG TERME pool (top 5): Fortress Value — MoS + Piotroski + Altman + Beneish
+    # Source: deep_valuation.csv enriched with fundamentals
+    # HARD GATES: Piotroski >= 7 AND Altman_Z >= 2.99 AND Beneish_M <= -1.78
     try:
         lt_source = pd.read_csv("deep_valuation.csv")
-        # Enrich with Fundamental_Score, Piotroski_F_Score, Altman_Z_Score
+        # Enrich with Fundamental_Score, Piotroski_F_Score, Altman_Z_Score, Beneish_M_Score
         try:
             fund_lt = pd.read_csv("fundamentals.csv")
-            lt_enrich = [c for c in ["Fundamental_Score", "Piotroski_F_Score", "Altman_Z_Score"]
+            lt_enrich = [c for c in ["Fundamental_Score", "Piotroski_F_Score", "Altman_Z_Score", "Beneish_M_Score"]
                          if c in fund_lt.columns and c not in lt_source.columns]
             if lt_enrich:
                 lt_source = lt_source.merge(fund_lt[["ticker"] + lt_enrich], on="ticker", how="left")
@@ -314,14 +314,14 @@ def run_narrative_analysis() -> pd.DataFrame:
     except FileNotFoundError:
         lt_df = df.copy()
 
-    # Progressive LT filters — Piotroski + Altman_Z hard gates first, then relax
+    # Progressive LT filters — Piotroski + Altman_Z + Beneish hard gates, then relax
     lt_filtered = pd.DataFrame()
     ct_mt_tickers = ct_pool["ticker"].tolist() + mt_pool["ticker"].tolist()
-    for mos_min, dv_min, pio_min, alt_min in [
-        (0.10, 55, 7, 2.99),   # Strict: strong balance sheet + safe zone + undervalued
-        (0.10, 40, 6, 2.50),   # Relax quality slightly
-        (0.05, 30, 5, 1.81),   # Grey zone Altman but decent Piotroski
-        (0.0,  0,  0, 0),      # Last resort: any undervalued stock
+    for mos_min, dv_min, pio_min, alt_min, ben_gate in [
+        (0.10, 55, 7, 2.99, True),    # Strict: strong balance sheet + safe zone + clean books
+        (0.10, 40, 6, 2.50, True),    # Relax quality slightly, still reject manipulators
+        (0.05, 30, 5, 1.81, True),    # Grey zone Altman but decent Piotroski, still reject manipulators
+        (0.0,  0,  0, 0,    False),   # Last resort: any undervalued stock
     ]:
         mask = ~lt_df["ticker"].isin(ct_mt_tickers)
         if mos_min is not None and "Margin_of_Safety" in lt_df.columns:
@@ -332,6 +332,8 @@ def run_narrative_analysis() -> pd.DataFrame:
             mask &= lt_df["Piotroski_F_Score"].fillna(0) >= pio_min
         if alt_min > 0 and "Altman_Z_Score" in lt_df.columns:
             mask &= lt_df["Altman_Z_Score"].fillna(0) >= alt_min
+        if ben_gate and "Beneish_M_Score" in lt_df.columns:
+            mask &= lt_df["Beneish_M_Score"].fillna(0) <= -1.78
         lt_filtered = lt_df[mask]
         if len(lt_filtered) >= 5:
             break

@@ -96,6 +96,7 @@ _OUTPUT_COLS = [
     "Altman_Z_Score",
     "Beta",
     "Momentum_1M",
+    "Beneish_M_Score",
 ]
 
 _OUTPUT_FILE = "Hedge_Fund_Master_Strategy.xlsx"
@@ -128,7 +129,7 @@ def build_portfolios(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
 
     LONG TERME (1+ years | Fortress Value):
         Source: _pool=="long" (deep_valuation full universe)
-        Hard Gates: Piotroski_F_Score >= 7 AND Altman_Z_Score >= 2.99
+        Hard Gates: Piotroski_F_Score >= 7 AND Altman_Z_Score >= 2.99 AND Beneish_M_Score <= -1.78
         Sort: Margin_of_Safety → Deep_Value_Score → Fundamental_Score
     """
     available = [c for c in _OUTPUT_COLS if c in df.columns]
@@ -193,11 +194,11 @@ def build_portfolios(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
     lt_cands = _pool_candidates(df, "long", exclude_tickers=ct_tickers + mt_tickers)
     # Progressive filter: Piotroski + Altman_Z hard gates → relax progressively
     filtered_lt = pd.DataFrame()
-    for mos_min, dv_min, pio_min, alt_min in [
-        (0.10, 55, 7, 2.99),   # Strict: strong balance sheet + safe zone
-        (0.10, 40, 6, 2.50),   # Relax quality slightly
-        (0.05, 30, 5, 1.81),   # Grey zone Altman but decent Piotroski
-        (0.0,  0,  0, 0),      # Last resort: any undervalued stock
+    for mos_min, dv_min, pio_min, alt_min, ben_gate in [
+        (0.10, 55, 7, 2.99, True),    # Strict: strong balance sheet + safe zone + clean books
+        (0.10, 40, 6, 2.50, True),    # Relax quality slightly, still reject manipulators
+        (0.05, 30, 5, 1.81, True),    # Grey zone Altman but decent Piotroski, still reject manipulators
+        (0.0,  0,  0, 0,    False),   # Last resort: any undervalued stock
     ]:
         mask = pd.Series(True, index=lt_cands.index)
         if mos_min is not None and "Margin_of_Safety" in lt_cands.columns:
@@ -208,6 +209,8 @@ def build_portfolios(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
             mask &= lt_cands["Piotroski_F_Score"].fillna(0) >= pio_min
         if alt_min > 0 and "Altman_Z_Score" in lt_cands.columns:
             mask &= lt_cands["Altman_Z_Score"].fillna(0) >= alt_min
+        if ben_gate and "Beneish_M_Score" in lt_cands.columns:
+            mask &= lt_cands["Beneish_M_Score"].fillna(0) <= -1.78
         filtered_lt = lt_cands[mask]
         if len(filtered_lt) >= 5:
             break

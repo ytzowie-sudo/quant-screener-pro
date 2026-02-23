@@ -194,6 +194,139 @@ def _altman_z_score(ticker_obj, info: dict) -> float:
         return np.nan
 
 
+def _beneish_m_score(ticker_obj) -> float:
+    """
+    Beneish M-Score — earnings manipulation detector.
+    M > -1.78 = probable manipulator (REJECT from LT portfolio)
+    M <= -1.78 = unlikely manipulator (safe)
+
+    8-variable model:
+        M = -4.84 + 0.920*DSRI + 0.528*GMI + 0.404*AQI + 0.892*SGI
+            + 0.115*DEPI - 0.172*SGAI + 4.679*TATA - 0.327*LVGI
+
+    Components (all YoY ratios, t = most recent, t-1 = prior year):
+        DSRI  = (Receivables_t / Revenue_t) / (Receivables_t1 / Revenue_t1)
+        GMI   = Gross_Margin_t1 / Gross_Margin_t
+        AQI   = (1 - (CA_t + PPE_t) / TA_t) / (1 - (CA_t1 + PPE_t1) / TA_t1)
+        SGI   = Revenue_t / Revenue_t1
+        DEPI  = Depr_Rate_t1 / Depr_Rate_t
+        SGAI  = (SGA_t / Revenue_t) / (SGA_t1 / Revenue_t1)
+        LVGI  = Leverage_t / Leverage_t1
+        TATA  = (Net_Income_t - CFO_t) / Total_Assets_t
+
+    Requires at least 2 annual periods from financials, balance_sheet, cashflow.
+    Returns np.nan if any component cannot be computed.
+    """
+    def _val(df, key, col_idx):
+        if df is None or df.empty or key not in df.index or col_idx >= len(df.columns):
+            return np.nan
+        v = df.loc[key].iloc[col_idx]
+        if v is None or (isinstance(v, float) and np.isnan(v)):
+            return np.nan
+        return float(v)
+
+    try:
+        fin = ticker_obj.financials
+        bs  = ticker_obj.balance_sheet
+        cf  = ticker_obj.cashflow
+
+        if fin is None or bs is None or cf is None:
+            return np.nan
+        if len(fin.columns) < 2 or len(bs.columns) < 2 or len(cf.columns) < 2:
+            return np.nan
+
+        # t = 0 (most recent), t-1 = 1 (prior year)
+        rev_t     = _val(fin, "Total Revenue", 0)
+        rev_t1    = _val(fin, "Total Revenue", 1)
+        cogs_t    = _val(fin, "Cost Of Revenue", 0)
+        cogs_t1   = _val(fin, "Cost Of Revenue", 1)
+        sga_t     = _val(fin, "Selling General And Administration", 0)
+        sga_t1    = _val(fin, "Selling General And Administration", 1)
+        ni_t      = _val(fin, "Net Income", 0)
+
+        ta_t      = _val(bs, "Total Assets", 0)
+        ta_t1     = _val(bs, "Total Assets", 1)
+        ca_t      = _val(bs, "Current Assets", 0)
+        ca_t1     = _val(bs, "Current Assets", 1)
+        ppe_t     = _val(bs, "Net PPE", 0)
+        ppe_t1    = _val(bs, "Net PPE", 1)
+        recv_t    = _val(bs, "Receivables", 0)
+        recv_t1   = _val(bs, "Receivables", 1)
+        cl_t      = _val(bs, "Current Liabilities", 0)
+        cl_t1     = _val(bs, "Current Liabilities", 1)
+        ltd_t     = _val(bs, "Long Term Debt", 0)
+        ltd_t1    = _val(bs, "Long Term Debt", 1)
+
+        cfo_key   = "Operating Cash Flow" if "Operating Cash Flow" in cf.index else "Cash Flow From Continuing Operating Activities"
+        cfo_t     = _val(cf, cfo_key, 0)
+
+        # Validate all required values are present
+        required = [rev_t, rev_t1, cogs_t, cogs_t1, sga_t, sga_t1, ni_t,
+                    ta_t, ta_t1, ca_t, ca_t1, ppe_t, ppe_t1,
+                    recv_t, recv_t1, cfo_t]
+        if any(np.isnan(v) for v in required):
+            return np.nan
+        if rev_t == 0 or rev_t1 == 0 or ta_t == 0 or ta_t1 == 0:
+            return np.nan
+
+        # DSRI — Days Sales in Receivables Index
+        dsri_t  = recv_t / rev_t
+        dsri_t1 = recv_t1 / rev_t1
+        dsri = dsri_t / dsri_t1 if dsri_t1 != 0 else 1.0
+
+        # GMI — Gross Margin Index
+        gm_t  = (rev_t - cogs_t) / rev_t
+        gm_t1 = (rev_t1 - cogs_t1) / rev_t1
+        gmi = gm_t1 / gm_t if gm_t != 0 else 1.0
+
+        # AQI — Asset Quality Index
+        hard_t  = (ca_t + ppe_t) / ta_t
+        hard_t1 = (ca_t1 + ppe_t1) / ta_t1
+        aqi = (1 - hard_t) / (1 - hard_t1) if (1 - hard_t1) != 0 else 1.0
+
+        # SGI — Sales Growth Index
+        sgi = rev_t / rev_t1
+
+        # DEPI — Depreciation Index
+        # Depreciation rate = Depreciation / (Depreciation + PPE)
+        # Use COGS proxy: depr_rate ~ PPE / (PPE + CA) as fallback if D&A missing
+        da_t  = _val(fin, "Reconciled Depreciation", 0)
+        da_t1 = _val(fin, "Reconciled Depreciation", 1)
+        if np.isnan(da_t) or np.isnan(da_t1):
+            depi = 1.0
+        else:
+            dr_t  = da_t / (da_t + ppe_t) if (da_t + ppe_t) != 0 else 0
+            dr_t1 = da_t1 / (da_t1 + ppe_t1) if (da_t1 + ppe_t1) != 0 else 0
+            depi = dr_t1 / dr_t if dr_t != 0 else 1.0
+
+        # SGAI — SGA Expense Index
+        sgai_t  = sga_t / rev_t
+        sgai_t1 = sga_t1 / rev_t1
+        sgai = sgai_t / sgai_t1 if sgai_t1 != 0 else 1.0
+
+        # LVGI — Leverage Index
+        lev_t  = (cl_t + (ltd_t if not np.isnan(ltd_t) else 0)) / ta_t
+        lev_t1 = (cl_t1 + (ltd_t1 if not np.isnan(ltd_t1) else 0)) / ta_t1
+        lvgi = lev_t / lev_t1 if lev_t1 != 0 else 1.0
+
+        # TATA — Total Accruals to Total Assets
+        tata = (ni_t - cfo_t) / ta_t
+
+        m = (-4.84
+             + 0.920 * dsri
+             + 0.528 * gmi
+             + 0.404 * aqi
+             + 0.892 * sgi
+             + 0.115 * depi
+             - 0.172 * sgai
+             + 4.679 * tata
+             - 0.327 * lvgi)
+
+        return round(float(m), 3)
+    except Exception:
+        return np.nan
+
+
 def _score_universe(df: pd.DataFrame) -> pd.Series:
     """
     Percentile-ranks each metric across the universe and combines them into
@@ -265,6 +398,7 @@ def evaluate_advanced_fundamentals() -> pd.DataFrame:
             row.update(_valuation_metrics(info))
             row["Piotroski_F_Score"] = _piotroski_f_score(info)
             row["Altman_Z_Score"]    = _altman_z_score(ticker_obj, info)
+            row["Beneish_M_Score"]   = _beneish_m_score(ticker_obj)
 
             if len(hist) >= 252:
                 price_now = float(hist["Close"].iloc[-1])
